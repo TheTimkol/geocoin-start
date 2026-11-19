@@ -1,35 +1,33 @@
 # GeoCoin-Start — Windows
 
-Русскоязычный установщик и простой клиент для Windows 10/11 x64.
+Russian-language installer and simplified GeoCoin wallet for Windows 10/11 x64.
 
-## Что входит
+## What it includes
 
-- Один автономный `GeoCoin-Start-Setup.exe`; для установки не нужны .NET или права администратора.
-- Официальный Windows-пакет GeoCoin v0.1.3 скачивается с релиза автора и проверяется по SHA-256 перед установкой.
-- Разделы «Обзор», «Майнинг», «Отправить», «Получить».
-- Работа через локальную ноду GeoCoin; пароль кошелька не сохраняется в приложении.
-- Создание зашифрованной резервной копии кошелька.
+- A single self-contained `GeoCoin-Start-Setup.exe`; no separate .NET runtime or administrator rights are required.
+- The official GeoCoin v0.1.3 Windows package is downloaded from the author's release and verified with SHA-256 before installation.
+- Four sections: Overview, Mining, Send, and Receive.
+- A local GeoCoin node; wallet passwords are not saved by the application.
+- Encrypted wallet backups.
 
-## Установка
+## Install
 
-Запустите `GeoCoin-Start-Setup.exe` и нажмите «Установить». Для первого запуска установщику нужен интернет. Пакет GeoCoin и приложение размещаются в `%LOCALAPPDATA%\Programs\GeoCoin-Start`; данные основной сети — в `%LOCALAPPDATA%\GeoCoin-Start\data`.
+Run `GeoCoin-Start-Setup.exe` and choose **Install**. An internet connection is required the first time. The official GeoCoin package and the application are installed under `%LOCALAPPDATA%\Programs\GeoCoin-Start`; main network data is stored under `%LOCALAPPDATA%\GeoCoin-Start\data`.
 
-Установка не запускает майнинг и не создаёт кошелёк без вашего действия. На первом запуске сначала запустите ноду, затем создайте кошелёк с паролем и сохраните резервную копию.
+The installer does not start mining or create a wallet without your action. On first use, start the node, create a password-protected wallet, save the password, and make a backup.
 
-## Сборка
+## Build
 
-Нужен .NET 10 SDK для Windows x64. Скрипт создаёт автономный EXE. Официальный пакет скачивается установщиком с релиза автора и сверяется с закреплённой SHA-256:
+The build script creates a self-contained Windows x64 executable. The installer downloads the official package directly from the author's release and checks it against the pinned SHA-256 value:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File installer\GeoCoinStart\InstallerBuild.ps1
 ```
 
-Результат по умолчанию: `outputs\GeoCoin-Start\GeoCoin-Start-Setup.exe`.
+## Attribution
 
-## Атрибуция
+- Original project: [NoemaCrypt / GeoCoin](https://github.com/NoemaCrypt/GeoCoin)
+- Original release: [GeoCoin v0.1.3](https://github.com/NoemaCrypt/GeoCoin/releases/tag/v0.1.3)
+- Redistributor: [TheTimkol on Telegram](https://t.me/TheTimkol)
 
-- Оригинальный проект: [NoemaCrypt / GeoCoin](https://github.com/NoemaCrypt/GeoCoin)
-- Оригинальный релиз: [GeoCoin v0.1.3](https://github.com/NoemaCrypt/GeoCoin/releases/tag/v0.1.3)
-- Редистрибьютор: [TheTimkol в Telegram](https://t.me/TheTimkol)
-
-Установщик не включает бинарные файлы GeoCoin: он получает их напрямую с официального релиза автора, сверяет SHA-256 и распаковывает файлы официального пакета вместе с каталогом лицензий зависимостей. Упрощённый клиент в этой версии показывает майнинг процессора. Настройка GPU-майнинга не выведена в простой интерфейс.
+The application exposes CPU mining only. GPU controls are not included in this simplified interface.
