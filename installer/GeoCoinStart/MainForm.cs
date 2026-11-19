@@ -15,6 +15,7 @@ internal sealed class MainForm : Form
     private static readonly Color Rail = Color.FromArgb(22, 31, 26);
 
     private readonly Panel _pagePanel = new();
+    private readonly Panel _headerPanel = new();
     private readonly Label _pageTitle = new();
     private readonly Label _statusLabel = new();
     private readonly Label _balanceValue = new();
@@ -54,12 +55,15 @@ internal sealed class MainForm : Form
     private bool _refreshing;
     private bool _allowClose;
     private bool _closePromptOpen;
+    private int _lastPageViewportWidth;
     private int _selectedThreads = Math.Max(1, Environment.ProcessorCount / 2);
 
     public MainForm()
     {
         Text = "GeoCoin-Start — простой кошелёк";
         StartPosition = FormStartPosition.CenterScreen;
+        AutoScaleMode = AutoScaleMode.Dpi;
+        AutoScaleDimensions = new SizeF(96f, 96f);
         MinimumSize = new Size(940, 640);
         Size = new Size(1120, 760);
         BackColor = Canvas;
@@ -86,19 +90,46 @@ internal sealed class MainForm : Form
         _threadCount.ValueChanged += (_, _) => _selectedThreads = (int)_threadCount.Value;
         _refreshTimer.Tick += async (_, _) => await RefreshStateAsync();
         _refreshTimer.Start();
+        Shown += (_, _) => FitWindowToScreen();
+        DpiChanged += (_, _) =>
+        {
+            if (Controls.Count > 0 && Controls[0] is TableLayoutPanel shell)
+            {
+                shell.ColumnStyles[0].Width = ScaleUi(224);
+                shell.RowStyles[0].Height = ScaleUi(100);
+            }
+            LayoutHeaderStatus();
+            BuildPage();
+        };
         SetPage("overview");
         UpdateStatus();
     }
 
     private void BuildShell()
     {
-        var rail = new Panel { Dock = DockStyle.Left, Width = 224, BackColor = Rail };
-        Controls.Add(rail);
+        var shell = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            Margin = Padding.Empty,
+            Padding = Padding.Empty,
+            ColumnCount = 2,
+            RowCount = 2,
+            BackColor = Canvas
+        };
+        shell.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, ScaleUi(224)));
+        shell.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        shell.RowStyles.Add(new RowStyle(SizeType.Absolute, ScaleUi(100)));
+        shell.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        Controls.Add(shell);
+
+        var rail = new Panel { Dock = DockStyle.Fill, Margin = Padding.Empty, BackColor = Rail };
+        shell.Controls.Add(rail, 0, 0);
+        shell.SetRowSpan(rail, 2);
 
         rail.Controls.Add(new Label
         {
             Text = "GeoCoin",
-            Location = new Point(24, 28),
+            Location = UiPoint(24, 22),
             AutoSize = true,
             Font = new Font("Segoe UI Semibold", 22, FontStyle.Bold),
             ForeColor = Color.FromArgb(233, 208, 153)
@@ -106,7 +137,7 @@ internal sealed class MainForm : Form
         rail.Controls.Add(new Label
         {
             Text = "ПРОСТОЙ КОШЕЛЁК",
-            Location = new Point(27, 66),
+            Location = UiPoint(27, 70),
             AutoSize = true,
             Font = new Font("Segoe UI", 8, FontStyle.Bold),
             ForeColor = Color.FromArgb(144, 161, 145)
@@ -122,8 +153,8 @@ internal sealed class MainForm : Form
                 Text = names[i],
                 Tag = pages[i],
                 TextAlign = ContentAlignment.MiddleLeft,
-                Location = new Point(18, 128 + i * 56),
-                Size = new Size(188, 44),
+                Location = UiPoint(18, 132 + i * 56),
+                Size = UiSize(188, 44),
                 FlatStyle = FlatStyle.Flat,
                 BackColor = Rail,
                 ForeColor = Color.FromArgb(206, 215, 205),
@@ -138,59 +169,116 @@ internal sealed class MainForm : Form
             _navigation[i] = button;
         }
 
+        var railFooter = new Panel
+        {
+            Dock = DockStyle.Bottom,
+            Height = ScaleUi(62),
+            BackColor = Rail
+        };
+        rail.Controls.Add(railFooter);
+
         var originalLink = new LinkLabel
         {
             Text = "Оригинальный проект ↗",
-            AutoSize = true,
-            Location = new Point(25, 626),
+            AutoSize = false,
+            Location = UiPoint(25, 4),
+            Size = UiSize(190, 22),
             LinkColor = Color.FromArgb(202, 180, 132),
             ActiveLinkColor = Color.White,
             Font = new Font("Segoe UI", 8.5f)
         };
         originalLink.LinkClicked += (_, _) => OpenLink(AppPaths.OriginalRepositoryUrl);
-        rail.Controls.Add(originalLink);
+        railFooter.Controls.Add(originalLink);
 
         var distributorLink = new LinkLabel
         {
             Text = "Редистрибьютор: TheTimkol ↗",
-            AutoSize = true,
-            Location = new Point(25, 650),
+            AutoSize = false,
+            Location = UiPoint(25, 29),
+            Size = UiSize(190, 22),
             LinkColor = Color.FromArgb(202, 180, 132),
             ActiveLinkColor = Color.White,
             Font = new Font("Segoe UI", 8.5f)
         };
         distributorLink.LinkClicked += (_, _) => OpenLink(AppPaths.DistributorUrl);
-        rail.Controls.Add(distributorLink);
+        railFooter.Controls.Add(distributorLink);
 
-        var header = new Panel { Dock = DockStyle.Top, Height = 100, BackColor = Canvas };
-        Controls.Add(header);
-        header.Controls.Add(_pageTitle);
-        _pageTitle.Location = new Point(34, 20);
+        _headerPanel.Dock = DockStyle.Fill;
+        _headerPanel.Margin = Padding.Empty;
+        _headerPanel.BackColor = Canvas;
+        shell.Controls.Add(_headerPanel, 1, 0);
+        _headerPanel.Controls.Add(_pageTitle);
+        _pageTitle.Location = UiPoint(34, 20);
         _pageTitle.AutoSize = true;
         _pageTitle.Font = new Font("Segoe UI Semibold", 21, FontStyle.Bold);
         _pageTitle.ForeColor = Ink;
-        header.Controls.Add(new Label
+        _headerPanel.Controls.Add(new Label
         {
             Text = "Управление GeoCoin без лишних настроек",
-            Location = new Point(37, 61),
+            Location = UiPoint(37, 61),
             AutoSize = true,
             ForeColor = Muted,
             Font = new Font("Segoe UI", 9.5f)
         });
 
-        _statusLabel.Location = new Point(768, 36);
-        _statusLabel.Size = new Size(292, 34);
+        _statusLabel.Size = UiSize(292, 34);
         _statusLabel.TextAlign = ContentAlignment.MiddleCenter;
         _statusLabel.Font = new Font("Segoe UI Semibold", 9, FontStyle.Bold);
         _statusLabel.BackColor = Color.FromArgb(226, 228, 219);
         _statusLabel.ForeColor = Muted;
-        header.Controls.Add(_statusLabel);
+        _headerPanel.Controls.Add(_statusLabel);
+        _headerPanel.SizeChanged += (_, _) => LayoutHeaderStatus();
 
         _pagePanel.Dock = DockStyle.Fill;
+        _pagePanel.Margin = Padding.Empty;
         _pagePanel.AutoScroll = true;
         _pagePanel.BackColor = Canvas;
-        _pagePanel.Padding = new Padding(34, 8, 34, 28);
-        Controls.Add(_pagePanel);
+        _pagePanel.Padding = UiPadding(34, 8, 34, 28);
+        shell.Controls.Add(_pagePanel, 1, 1);
+        _pagePanel.ClientSizeChanged += (_, _) => RefreshPageLayoutForWidth();
+        LayoutHeaderStatus();
+    }
+
+    private void LayoutHeaderStatus()
+    {
+        if (_statusLabel.IsDisposed || _headerPanel.IsDisposed) return;
+        int margin = ScaleUi(34);
+        int width = _statusLabel.Width > 0 ? _statusLabel.Width : ScaleUi(292);
+        _statusLabel.Location = new Point(Math.Max(margin, _headerPanel.ClientSize.Width - margin - width), ScaleUi(36));
+    }
+
+    private void RefreshPageLayoutForWidth()
+    {
+        int width = _pagePanel.ClientSize.Width;
+        if (!IsHandleCreated || IsDisposed || width <= 0 || width == _lastPageViewportWidth) return;
+        _lastPageViewportWidth = width;
+        BeginInvoke((Action)BuildPage);
+    }
+
+    private int PageCardWidth(int preferredWidth)
+    {
+        int availablePixels = _pagePanel.ClientSize.Width - _pagePanel.Padding.Horizontal - ScaleUi(44);
+        if (availablePixels <= 0) return preferredWidth;
+        int availableLogical = (int)Math.Floor(availablePixels * 96d / Math.Max(96, DeviceDpi));
+        return Math.Max(520, Math.Min(preferredWidth, availableLogical));
+    }
+
+    private int ScaleUi(int value) => (int)Math.Round(value * DeviceDpi / 96d);
+    private Point UiPoint(int x, int y) => new(ScaleUi(x), ScaleUi(y));
+    private Size UiSize(int width, int height) => new(ScaleUi(width), ScaleUi(height));
+    private Padding UiPadding(int left, int top, int right, int bottom)
+        => new(ScaleUi(left), ScaleUi(top), ScaleUi(right), ScaleUi(bottom));
+
+    private void FitWindowToScreen()
+    {
+        Rectangle workArea = Screen.FromControl(this).WorkingArea;
+        int width = Math.Max(720, Math.Min(Width, workArea.Width - 24));
+        int height = Math.Max(540, Math.Min(Height, workArea.Height - 24));
+        if (width >= Width && height >= Height) return;
+
+        MinimumSize = new Size(Math.Min(MinimumSize.Width, width), Math.Min(MinimumSize.Height, height));
+        Size = new Size(width, height);
+        CenterToScreen();
     }
 
     private void SetPage(string page)
@@ -231,33 +319,34 @@ internal sealed class MainForm : Form
 
     private void BuildOverviewPage()
     {
-        AddParagraph("Здесь видно состояние кошелька и синхронизации. Для начала запустите ноду.", 22, 12, 700, 44);
+        int cardWidth = PageCardWidth(700);
+        AddParagraph("Здесь видно состояние кошелька и синхронизации. Для начала запустите ноду.", 22, 12, cardWidth, 44);
 
-        Panel balanceCard = AddCard(22, 72, 700, 162);
+        Panel balanceCard = AddCard(22, 72, cardWidth, 162);
         AddLabel(balanceCard, "БАЛАНС КОШЕЛЬКА", 24, 20, 250, 20, Muted, 9, bold: true);
         _balanceValue.Text = _nodeProcess is null ? "— GC" : $"{_balance.ToString("0.########", CultureInfo.InvariantCulture)} GC";
-        _balanceValue.Location = new Point(22, 49);
+        _balanceValue.Location = UiPoint(22, 49);
         _balanceValue.AutoSize = true;
         _balanceValue.Font = new Font("Segoe UI Semibold", 30, FontStyle.Bold);
         _balanceValue.ForeColor = Ink;
         balanceCard.Controls.Add(_balanceValue);
         _nodeState.Text = _nodeProcess is null ? "Нода не запущена" : _nodeStatus;
-        _nodeState.Location = new Point(26, 112);
+        _nodeState.Location = UiPoint(26, 112);
         _nodeState.AutoSize = true;
         _nodeState.ForeColor = Muted;
         balanceCard.Controls.Add(_nodeState);
 
-        Panel networkCard = AddCard(22, 252, 700, 142);
+        Panel networkCard = AddCard(22, 252, cardWidth, 142);
         AddLabel(networkCard, "СОСТОЯНИЕ СЕТИ", 24, 20, 230, 20, Muted, 9, bold: true);
         _syncState.Text = _nodeProcess is null ? "Запустите ноду, чтобы начать подключение" : SyncDescription();
-        _syncState.Location = new Point(24, 53);
+        _syncState.Location = UiPoint(24, 53);
         _syncState.AutoSize = false;
-        _syncState.Size = new Size(642, 28);
+        _syncState.Size = UiSize(Math.Max(240, cardWidth - 58), 28);
         _syncState.Font = new Font("Segoe UI Semibold", 13, FontStyle.Bold);
         _syncState.ForeColor = Ink;
         networkCard.Controls.Add(_syncState);
         _peerState.Text = _nodeProcess is null ? "" : $"Блоков: {_height:N0}     Узлов сети: {_connections}";
-        _peerState.Location = new Point(26, 95);
+        _peerState.Location = UiPoint(26, 95);
         _peerState.AutoSize = true;
         _peerState.ForeColor = Muted;
         networkCard.Controls.Add(_peerState);
@@ -274,20 +363,21 @@ internal sealed class MainForm : Form
         _overviewHint.Text = File.Exists(AppPaths.WalletPath)
             ? "Сделайте резервную копию кошелька и храните её отдельно от компьютера."
             : "После подключения создайте защищённый паролем кошелёк. Пароль нельзя восстановить через это приложение.";
-        _overviewHint.Location = new Point(24, 474);
-        _overviewHint.Size = new Size(700, 44);
+        _overviewHint.Location = UiPoint(24, 474);
+        _overviewHint.Size = UiSize(cardWidth - 24, 44);
         _overviewHint.ForeColor = Muted;
         _pagePanel.Controls.Add(_overviewHint);
     }
 
     private void BuildMiningPage()
     {
-        AddParagraph("Майнинг использует процессор этого компьютера. Начните с небольшого числа потоков: компьютер будет работать тише и холоднее.", 22, 12, 700, 58);
-        Panel card = AddCard(22, 86, 700, 258);
-        AddLabel(card, "Потоки процессора", 24, 22, 280, 24, Ink, 13, bold: true);
-        AddLabel(card, "Чем больше потоков, тем выше нагрузка на компьютер.", 24, 54, 500, 25, Muted, 9.5f);
-        _threadCount.Location = new Point(27, 101);
-        _threadCount.Size = new Size(112, 31);
+        int cardWidth = PageCardWidth(700);
+        AddParagraph("Майнинг использует процессор этого компьютера. Начните с небольшого числа потоков: компьютер будет работать тише и холоднее.", 22, 12, cardWidth, 58);
+        Panel card = AddCard(22, 86, cardWidth, 258);
+        AddLabel(card, "Потоки процессора", 24, 22, cardWidth - 48, 24, Ink, 13, bold: true);
+        AddLabel(card, "Чем больше потоков, тем выше нагрузка на компьютер.", 24, 54, cardWidth - 48, 25, Muted, 9.5f);
+        _threadCount.Location = UiPoint(27, 101);
+        _threadCount.Size = UiSize(112, 31);
         _threadCount.Minimum = 1;
         _threadCount.Maximum = Math.Max(1, Environment.ProcessorCount);
         _threadCount.Value = Math.Max(1, Math.Min((int)_threadCount.Maximum, _selectedThreads));
@@ -295,7 +385,7 @@ internal sealed class MainForm : Form
         card.Controls.Add(_threadCount);
 
         _miningState.Text = _miningActive ? $"Майнинг включён · потоков: {(int)_threadCount.Value}" : "Майнинг остановлен";
-        _miningState.Location = new Point(24, 157);
+        _miningState.Location = UiPoint(24, 157);
         _miningState.AutoSize = true;
         _miningState.ForeColor = _miningActive ? Color.FromArgb(53, 119, 74) : Muted;
         card.Controls.Add(_miningState);
@@ -305,50 +395,54 @@ internal sealed class MainForm : Form
         _mineButton.Enabled = IsNodeRunning() && File.Exists(AppPaths.WalletPath);
         card.Controls.Add(_mineButton);
 
-        if (!IsNodeRunning()) AddParagraph("Сначала запустите ноду на странице «Обзор».", 24, 372, 650, 32);
-        else if (!File.Exists(AppPaths.WalletPath)) AddParagraph("Сначала создайте кошелёк на странице «Обзор».", 24, 372, 650, 32);
+        if (!IsNodeRunning()) AddParagraph("Сначала запустите ноду на странице «Обзор».", 24, 372, cardWidth - 48, 32);
+        else if (!File.Exists(AppPaths.WalletPath)) AddParagraph("Сначала создайте кошелёк на странице «Обзор».", 24, 372, cardWidth - 48, 32);
     }
 
     private void BuildSendPage()
     {
-        AddParagraph("Введите адрес получателя и сумму. Перед отправкой приложение покажет итоговое подтверждение.", 22, 12, 700, 48);
-        Panel card = AddCard(22, 78, 700, 424);
-        AddLabel(card, "Адрес получателя", 26, 22, 300, 22, Ink, 11, bold: true);
-        StyleTextBox(_sendAddress, new Point(26, 51), new Size(640, 36));
+        int cardWidth = PageCardWidth(700);
+        int fieldWidth = cardWidth - 60;
+        AddParagraph("Введите адрес получателя и сумму. Перед отправкой приложение покажет итоговое подтверждение.", 22, 12, cardWidth, 48);
+        Panel card = AddCard(22, 78, cardWidth, 424);
+        AddLabel(card, "Адрес получателя", 26, 22, fieldWidth, 22, Ink, 11, bold: true);
+        StyleTextBox(_sendAddress, new Point(26, 51), new Size(fieldWidth, 36));
         _sendAddress.PlaceholderText = "Адрес GeoCoin получателя";
         card.Controls.Add(_sendAddress);
 
         AddLabel(card, "Сумма, GC", 26, 112, 200, 22, Ink, 11, bold: true);
-        StyleTextBox(_sendAmount, new Point(26, 141), new Size(220, 36));
+        StyleTextBox(_sendAmount, new Point(26, 141), new Size(Math.Min(220, fieldWidth), 36));
         _sendAmount.PlaceholderText = "Например, 1,25";
         card.Controls.Add(_sendAmount);
 
         AddLabel(card, "Пароль кошелька", 26, 198, 220, 22, Ink, 11, bold: true);
-        StyleTextBox(_sendPassword, new Point(26, 227), new Size(320, 36));
+        StyleTextBox(_sendPassword, new Point(26, 227), new Size(Math.Min(320, fieldWidth), 36));
         _sendPassword.UseSystemPasswordChar = true;
         card.Controls.Add(_sendPassword);
 
         AddLabel(card, "Комиссия рассчитается автоматически. Отправленную транзакцию нельзя отменить.",
-            26, 282, 635, 44, Muted, 9.5f);
+            26, 282, fieldWidth, 44, Muted, 9.5f);
         _sendButton.Text = "Проверить и отправить";
         StylePrimaryButton(_sendButton, new Point(26, 344), new Size(228, 42));
         _sendButton.Enabled = IsNodeRunning() && File.Exists(AppPaths.WalletPath);
         card.Controls.Add(_sendButton);
 
-        _sendMessage.Location = new Point(26, 390);
-        _sendMessage.Size = new Size(640, 24);
+        _sendMessage.Location = UiPoint(26, 390);
+        _sendMessage.Size = UiSize(fieldWidth, 24);
         _sendMessage.ForeColor = Muted;
         card.Controls.Add(_sendMessage);
     }
 
     private void BuildReceivePage()
     {
-        AddParagraph("Создайте новый адрес для получения монет и отправьте его человеку, который переводит вам GeoCoin.", 22, 12, 700, 48);
-        Panel card = AddCard(22, 78, 700, 286);
-        AddLabel(card, "ВАШ АДРЕС ДЛЯ ПОЛУЧЕНИЯ", 26, 22, 450, 22, Muted, 9, bold: true);
+        int cardWidth = PageCardWidth(700);
+        int fieldWidth = cardWidth - 60;
+        AddParagraph("Создайте новый адрес для получения монет и отправьте его человеку, который переводит вам GeoCoin.", 22, 12, cardWidth, 48);
+        Panel card = AddCard(22, 78, cardWidth, 286);
+        AddLabel(card, "ВАШ АДРЕС ДЛЯ ПОЛУЧЕНИЯ", 26, 22, fieldWidth, 22, Muted, 9, bold: true);
         _receiveAddress.Text = string.IsNullOrWhiteSpace(_lastAddress) ? "Новый адрес появится здесь" : _lastAddress;
-        _receiveAddress.Location = new Point(26, 59);
-        _receiveAddress.Size = new Size(638, 70);
+        _receiveAddress.Location = UiPoint(26, 59);
+        _receiveAddress.Size = UiSize(fieldWidth, 70);
         _receiveAddress.AutoEllipsis = true;
         _receiveAddress.ForeColor = Ink;
         _receiveAddress.Font = new Font("Segoe UI Semibold", 12, FontStyle.Bold);
@@ -366,13 +460,13 @@ internal sealed class MainForm : Form
         card.Controls.Add(copy);
 
         _receiveMessage.Text = "Новый адрес можно использовать для одного или нескольких переводов.";
-        _receiveMessage.Location = new Point(26, 219);
-        _receiveMessage.Size = new Size(640, 32);
+        _receiveMessage.Location = UiPoint(26, 219);
+        _receiveMessage.Size = UiSize(fieldWidth, 32);
         _receiveMessage.ForeColor = Muted;
         card.Controls.Add(_receiveMessage);
 
-        if (!IsNodeRunning()) AddParagraph("Сначала запустите ноду на странице «Обзор».", 24, 394, 650, 32);
-        else if (!File.Exists(AppPaths.WalletPath)) AddParagraph("Сначала создайте кошелёк на странице «Обзор».", 24, 394, 650, 32);
+        if (!IsNodeRunning()) AddParagraph("Сначала запустите ноду на странице «Обзор».", 24, 394, cardWidth - 48, 32);
+        else if (!File.Exists(AppPaths.WalletPath)) AddParagraph("Сначала создайте кошелёк на странице «Обзор».", 24, 394, cardWidth - 48, 32);
     }
 
     private async Task StartNodeAsync()
@@ -840,8 +934,8 @@ internal sealed class MainForm : Form
     {
         var card = new Panel
         {
-            Location = new Point(x, y),
-            Size = new Size(width, height),
+            Location = UiPoint(x, y),
+            Size = UiSize(width, height),
             BackColor = Color.White,
             BorderStyle = BorderStyle.FixedSingle
         };
@@ -854,31 +948,31 @@ internal sealed class MainForm : Form
         _pagePanel.Controls.Add(new Label
         {
             Text = text,
-            Location = new Point(x, y),
-            Size = new Size(width, height),
+            Location = UiPoint(x, y),
+            Size = UiSize(width, height),
             ForeColor = Muted,
             Font = new Font("Segoe UI", 10),
             AutoEllipsis = true
         });
     }
 
-    private static void AddLabel(Control parent, string text, int x, int y, int width, int height, Color color, float size, bool bold = false)
+    private void AddLabel(Control parent, string text, int x, int y, int width, int height, Color color, float size, bool bold = false)
     {
         parent.Controls.Add(new Label
         {
             Text = text,
-            Location = new Point(x, y),
-            Size = new Size(width, height),
+            Location = UiPoint(x, y),
+            Size = UiSize(width, height),
             ForeColor = color,
             Font = new Font(bold ? "Segoe UI Semibold" : "Segoe UI", size, bold ? FontStyle.Bold : FontStyle.Regular),
             AutoEllipsis = true
         });
     }
 
-    private static void StylePrimaryButton(Button button, Point location, Size size)
+    private void StylePrimaryButton(Button button, Point location, Size size)
     {
-        button.Location = location;
-        button.Size = size;
+        button.Location = UiPoint(location.X, location.Y);
+        button.Size = UiSize(size.Width, size.Height);
         button.FlatStyle = FlatStyle.Flat;
         button.FlatAppearance.BorderSize = 0;
         button.BackColor = Accent;
@@ -887,10 +981,10 @@ internal sealed class MainForm : Form
         button.Cursor = Cursors.Hand;
     }
 
-    private static void StyleSecondaryButton(Button button, Point location, Size size)
+    private void StyleSecondaryButton(Button button, Point location, Size size)
     {
-        button.Location = location;
-        button.Size = size;
+        button.Location = UiPoint(location.X, location.Y);
+        button.Size = UiSize(size.Width, size.Height);
         button.FlatStyle = FlatStyle.Flat;
         button.FlatAppearance.BorderColor = Color.FromArgb(194, 198, 187);
         button.BackColor = Color.White;
@@ -899,10 +993,10 @@ internal sealed class MainForm : Form
         button.Cursor = Cursors.Hand;
     }
 
-    private static void StyleTextBox(TextBox box, Point location, Size size)
+    private void StyleTextBox(TextBox box, Point location, Size size)
     {
-        box.Location = location;
-        box.Size = size;
+        box.Location = UiPoint(location.X, location.Y);
+        box.Size = UiSize(size.Width, size.Height);
         box.Font = new Font("Segoe UI", 11);
         box.BorderStyle = BorderStyle.FixedSingle;
         box.BackColor = Color.FromArgb(250, 250, 247);
