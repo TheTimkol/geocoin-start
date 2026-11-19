@@ -12,9 +12,11 @@ internal sealed class InstallerForm : Form
     private sealed record InstallProgress(int Percent, string Message);
 
     private readonly Label _title = new();
+    private readonly PictureBox _logo = new();
     private readonly Label _subtitle = new();
     private readonly Label _notes = new();
     private readonly LinkLabel _originalCredit = new();
+    private readonly LinkLabel _symbolCredit = new();
     private readonly LinkLabel _distributorCredit = new();
     private readonly Label _status;
     private readonly ProgressBar _progress;
@@ -26,17 +28,23 @@ internal sealed class InstallerForm : Form
     {
         _alreadyInstalled = File.Exists(AppPaths.InstallMarker) && File.Exists(AppPaths.ExecutablePath);
         Text = "Установка GeoCoin-Start";
+        Icon = Icon.ExtractAssociatedIcon(Environment.ProcessPath ?? "") ?? SystemIcons.Application;
         StartPosition = FormStartPosition.CenterScreen;
         FormBorderStyle = FormBorderStyle.Sizable;
         AutoScaleMode = AutoScaleMode.Dpi;
         AutoScroll = true;
         MaximizeBox = true;
         MinimizeBox = false;
-        ClientSize = new Size(740, 520);
-        MinimumSize = new Size(660, 500);
+        ClientSize = new Size(760, 560);
+        MinimumSize = new Size(700, 540);
         BackColor = Color.FromArgb(20, 27, 24);
         ForeColor = Color.FromArgb(238, 239, 234);
         Font = new Font("Segoe UI", 10);
+
+        _logo.Size = new Size(52, 52);
+        _logo.SizeMode = PictureBoxSizeMode.Zoom;
+        _logo.Image = (Icon ?? SystemIcons.Application).ToBitmap();
+        Controls.Add(_logo);
 
         _title.Text = "GeoCoin\nпросто и по шагам";
         _title.Font = new Font("Segoe UI Semibold", 19, FontStyle.Bold);
@@ -63,6 +71,13 @@ internal sealed class InstallerForm : Form
         _originalCredit.ActiveLinkColor = Color.White;
         _originalCredit.LinkClicked += (_, _) => OpenLink(AppPaths.OriginalRepositoryUrl);
         Controls.Add(_originalCredit);
+
+        _symbolCredit.Text = "Знак GeoCoin: geocoin.network ↗";
+        _symbolCredit.AutoSize = true;
+        _symbolCredit.LinkColor = Color.FromArgb(233, 208, 153);
+        _symbolCredit.ActiveLinkColor = Color.White;
+        _symbolCredit.LinkClicked += (_, _) => OpenLink(AppPaths.OfficialWebsiteUrl);
+        Controls.Add(_symbolCredit);
 
         _distributorCredit.Text = "Редистрибьютор: TheTimkol ↗";
         _distributorCredit.AutoSize = true;
@@ -153,8 +168,9 @@ internal sealed class InstallerForm : Form
             int contentWidth = Math.Max(180, ClientSize.Width - margin * 2);
             int y = 26;
 
-            _title.MaximumSize = new Size(contentWidth, 0);
-            _title.Location = new Point(margin, y);
+            _logo.Location = new Point(margin, y + 4);
+            _title.MaximumSize = new Size(Math.Max(180, contentWidth - 68), 0);
+            _title.Location = new Point(margin + 68, y);
             y = _title.Bottom + 14;
 
             _subtitle.MaximumSize = new Size(contentWidth, 0);
@@ -167,7 +183,11 @@ internal sealed class InstallerForm : Form
 
             _originalCredit.MaximumSize = new Size(contentWidth, 0);
             _originalCredit.Location = new Point(margin, y);
-            y = _originalCredit.Bottom + 8;
+            y = _originalCredit.Bottom + 6;
+
+            _symbolCredit.MaximumSize = new Size(contentWidth, 0);
+            _symbolCredit.Location = new Point(margin, y);
+            y = _symbolCredit.Bottom + 6;
 
             _distributorCredit.MaximumSize = new Size(contentWidth, 0);
             _distributorCredit.Location = new Point(margin, y);
@@ -271,12 +291,18 @@ internal sealed class InstallerForm : Form
             string markerJson = JsonSerializer.Serialize(new
             {
                 app = "GeoCoin-Start",
-                version = "0.1.0",
+                version = AppPaths.AppVersion,
                 official_version = AppPaths.OfficialVersion,
                 official_sha256 = AppPaths.OfficialSha256
             }, new JsonSerializerOptions { WriteIndented = true });
             await File.WriteAllTextAsync(AppPaths.InstallMarker, markerJson);
-            TryCreateShortcut(installedExe);
+            RegisterInstallation(installedExe);
+            TryCreateShortcut(installedExe, Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), "GeoCoin-Start.lnk"));
+            string startMenu = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.StartMenu), "Programs", "GeoCoin-Start");
+            Directory.CreateDirectory(startMenu);
+            TryCreateShortcut(installedExe, Path.Combine(startMenu, "GeoCoin-Start.lnk"));
+            TryCreateShortcut(installedExe, Path.Combine(startMenu, "Удалить GeoCoin-Start.lnk"), "--uninstall");
             progress.Report(new InstallProgress(100, "Установка завершена."));
         }
         finally
@@ -285,7 +311,20 @@ internal sealed class InstallerForm : Form
         }
     }
 
-    private static void TryCreateShortcut(string target)
+    private static void RegisterInstallation(string installedExe)
+    {
+        using Microsoft.Win32.RegistryKey key = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(AppPaths.UninstallKey);
+        key.SetValue("DisplayName", "GeoCoin-Start");
+        key.SetValue("DisplayVersion", AppPaths.AppVersion);
+        key.SetValue("Publisher", "TheTimkol");
+        key.SetValue("InstallLocation", AppPaths.InstallDirectory);
+        key.SetValue("DisplayIcon", installedExe);
+        key.SetValue("UninstallString", $"\"{installedExe}\" --uninstall");
+        key.SetValue("NoModify", 1, Microsoft.Win32.RegistryValueKind.DWord);
+        key.SetValue("NoRepair", 1, Microsoft.Win32.RegistryValueKind.DWord);
+    }
+
+    private static void TryCreateShortcut(string target, string shortcutPath, string? arguments = null)
     {
         object? shell = null;
         object? shortcut = null;
@@ -296,10 +335,10 @@ internal sealed class InstallerForm : Form
             shell = Activator.CreateInstance(shellType);
             if (shell is null) return;
             dynamic automation = shell;
-            string desktop = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
-            shortcut = automation.CreateShortcut(Path.Combine(desktop, "GeoCoin-Start.lnk"));
+            shortcut = automation.CreateShortcut(shortcutPath);
             dynamic link = shortcut;
             link.TargetPath = target;
+            link.Arguments = arguments ?? "";
             link.WorkingDirectory = AppPaths.InstallDirectory;
             link.Description = "Простой интерфейс GeoCoin";
             link.Save();

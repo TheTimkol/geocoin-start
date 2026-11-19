@@ -8,6 +8,11 @@ namespace GeoCoinStart;
 
 internal sealed class MainForm : Form
 {
+    private sealed record GpuDevice(string Backend, string Id, string Name)
+    {
+        public override string ToString() => $"{Name} — {Backend.ToUpperInvariant()} · {Id}";
+    }
+
     private static readonly Color Canvas = Color.FromArgb(241, 241, 235);
     private static readonly Color Ink = Color.FromArgb(31, 39, 34);
     private static readonly Color Muted = Color.FromArgb(104, 115, 105);
@@ -24,7 +29,11 @@ internal sealed class MainForm : Form
     private readonly Label _syncState = new();
     private readonly Label _peerState = new();
     private readonly Label _miningState = new();
+    private readonly Label _miningHashrate = new();
     private readonly NumericUpDown _threadCount = new();
+    private readonly ComboBox _miningModeCombo = new();
+    private readonly ComboBox _gpuDeviceCombo = new();
+    private readonly Button _refreshGpuButton = new();
     private readonly TextBox _sendAddress = new();
     private readonly TextBox _sendAmount = new();
     private readonly TextBox _sendPassword = new();
@@ -34,6 +43,7 @@ internal sealed class MainForm : Form
     private readonly Label _overviewHint = new();
     private readonly Button _nodeButton = new();
     private readonly Button _walletButton = new();
+    private readonly Button _walletRestoreButton = new();
     private readonly Button _mineButton = new();
     private readonly Button _sendButton = new();
     private readonly Button _receiveButton = new();
@@ -42,8 +52,12 @@ internal sealed class MainForm : Form
 
     private GeoCoinRpcClient? _rpc;
     private Process? _nodeProcess;
+    private Process? _gpuMinerProcess;
     private StreamWriter? _logWriter;
     private string? _adminPassword;
+    private string? _minerPassword;
+    private string? _sessionDirectory;
+    private string? _minerPassFile;
     private string? _lastAddress;
     private string _currentPage = "overview";
     private string _nodeStatus = "Нода остановлена";
@@ -52,6 +66,8 @@ internal sealed class MainForm : Form
     private long _headers;
     private int _connections;
     private bool _miningActive;
+    private string _miningMode = "CPU";
+    private readonly List<GpuDevice> _gpuDevices = new();
     private bool _refreshing;
     private bool _allowClose;
     private bool _closePromptOpen;
@@ -61,6 +77,7 @@ internal sealed class MainForm : Form
     public MainForm()
     {
         Text = "GeoCoin-Start — простой кошелёк";
+        Icon = Icon.ExtractAssociatedIcon(Environment.ProcessPath ?? "") ?? SystemIcons.Application;
         StartPosition = FormStartPosition.CenterScreen;
         AutoScaleMode = AutoScaleMode.Dpi;
         AutoScaleDimensions = new SizeF(96f, 96f);
@@ -84,7 +101,21 @@ internal sealed class MainForm : Form
             else await CreateWalletAsync();
             BuildPage();
         };
+        _walletRestoreButton.Click += async (_, _) =>
+        {
+            await RestoreWalletAsync();
+            BuildPage();
+        };
         _mineButton.Click += async (_, _) => await ToggleMiningAsync();
+        _refreshGpuButton.Click += async (_, _) => await RefreshGpuDevicesAsync();
+        _miningModeCombo.SelectedIndexChanged += (_, _) =>
+        {
+            if (_miningActive || _currentPage != "mining") return;
+            string selected = _miningModeCombo.SelectedItem?.ToString() ?? "CPU";
+            if (selected == _miningMode) return;
+            _miningMode = selected;
+            BuildPage();
+        };
         _sendButton.Click += async (_, _) => await SendAsync();
         _receiveButton.Click += async (_, _) => await CreateReceiveAddressAsync();
         _threadCount.ValueChanged += (_, _) => _selectedThreads = (int)_threadCount.Value;
@@ -126,10 +157,18 @@ internal sealed class MainForm : Form
         shell.Controls.Add(rail, 0, 0);
         shell.SetRowSpan(rail, 2);
 
+        var brandIcon = new PictureBox
+        {
+            Location = UiPoint(20, 23),
+            Size = UiSize(38, 38),
+            SizeMode = PictureBoxSizeMode.Zoom,
+            Image = (Icon ?? SystemIcons.Application).ToBitmap()
+        };
+        rail.Controls.Add(brandIcon);
         rail.Controls.Add(new Label
         {
             Text = "GeoCoin",
-            Location = UiPoint(24, 22),
+            Location = UiPoint(64, 22),
             AutoSize = true,
             Font = new Font("Segoe UI Semibold", 22, FontStyle.Bold),
             ForeColor = Color.FromArgb(233, 208, 153)
@@ -355,15 +394,21 @@ internal sealed class MainForm : Form
         StylePrimaryButton(_nodeButton, new Point(22, 416), new Size(192, 42));
         _pagePanel.Controls.Add(_nodeButton);
 
-        _walletButton.Text = File.Exists(AppPaths.WalletPath) ? "Создать резервную копию" : "Создать кошелёк";
+        bool hasWallet = File.Exists(AppPaths.WalletPath);
+        _walletButton.Text = hasWallet ? "Сохранить копию" : "Создать кошелёк";
         StyleSecondaryButton(_walletButton, new Point(232, 416), new Size(230, 42));
         _walletButton.Enabled = IsNodeRunning();
         _pagePanel.Controls.Add(_walletButton);
 
+        _walletRestoreButton.Text = hasWallet ? "Заменить кошелёк" : "Восстановить кошелёк";
+        StyleSecondaryButton(_walletRestoreButton, new Point(232, 468), new Size(230, 42));
+        _walletRestoreButton.Enabled = IsNodeRunning();
+        _pagePanel.Controls.Add(_walletRestoreButton);
+
         _overviewHint.Text = File.Exists(AppPaths.WalletPath)
             ? "Сделайте резервную копию кошелька и храните её отдельно от компьютера."
             : "После подключения создайте защищённый паролем кошелёк. Пароль нельзя восстановить через это приложение.";
-        _overviewHint.Location = UiPoint(24, 474);
+        _overviewHint.Location = UiPoint(24, 524);
         _overviewHint.Size = UiSize(cardWidth - 24, 44);
         _overviewHint.ForeColor = Muted;
         _pagePanel.Controls.Add(_overviewHint);
@@ -372,27 +417,72 @@ internal sealed class MainForm : Form
     private void BuildMiningPage()
     {
         int cardWidth = PageCardWidth(700);
-        AddParagraph("Майнинг использует процессор этого компьютера. Начните с небольшого числа потоков: компьютер будет работать тише и холоднее.", 22, 12, cardWidth, 58);
-        Panel card = AddCard(22, 86, cardWidth, 258);
-        AddLabel(card, "Потоки процессора", 24, 22, cardWidth - 48, 24, Ink, 13, bold: true);
-        AddLabel(card, "Чем больше потоков, тем выше нагрузка на компьютер.", 24, 54, cardWidth - 48, 25, Muted, 9.5f);
-        _threadCount.Location = UiPoint(27, 101);
-        _threadCount.Size = UiSize(112, 31);
-        _threadCount.Minimum = 1;
-        _threadCount.Maximum = Math.Max(1, Environment.ProcessorCount);
-        _threadCount.Value = Math.Max(1, Math.Min((int)_threadCount.Maximum, _selectedThreads));
-        _threadCount.Font = new Font("Segoe UI", 11);
-        card.Controls.Add(_threadCount);
+        AddParagraph("Выберите процессор или видеокарту. Майнинг заметно нагружает компьютер и может увеличить расход электричества.", 22, 12, cardWidth, 52);
+        Panel card = AddCard(22, 78, cardWidth, 364);
+        AddLabel(card, "Способ майнинга", 24, 18, cardWidth - 48, 22, Ink, 12, bold: true);
+        _miningModeCombo.DropDownStyle = ComboBoxStyle.DropDownList;
+        _miningModeCombo.Items.Clear();
+        _miningModeCombo.Items.AddRange(new object[] { "CPU", "GPU" });
+        _miningModeCombo.SelectedItem = _miningMode;
+        _miningModeCombo.Location = UiPoint(24, 46);
+        _miningModeCombo.Size = UiSize(220, 34);
+        _miningModeCombo.Font = new Font("Segoe UI", 10);
+        card.Controls.Add(_miningModeCombo);
 
-        _miningState.Text = _miningActive ? $"Майнинг включён · потоков: {(int)_threadCount.Value}" : "Майнинг остановлен";
-        _miningState.Location = UiPoint(24, 157);
+        if (_miningMode == "CPU")
+        {
+            AddLabel(card, "Потоки процессора", 24, 99, cardWidth - 48, 22, Ink, 12, bold: true);
+            AddLabel(card, "Начните с небольшого числа потоков, чтобы компьютер оставался отзывчивым.", 24, 126, cardWidth - 48, 34, Muted, 9.5f);
+            _threadCount.Location = UiPoint(27, 166);
+            _threadCount.Size = UiSize(112, 31);
+            _threadCount.Minimum = 1;
+            _threadCount.Maximum = Math.Max(1, Environment.ProcessorCount);
+            _threadCount.Value = Math.Max(1, Math.Min((int)_threadCount.Maximum, _selectedThreads));
+            _threadCount.Font = new Font("Segoe UI", 11);
+            card.Controls.Add(_threadCount);
+        }
+        else
+        {
+            AddLabel(card, "Видеокарта", 24, 99, cardWidth - 48, 22, Ink, 12, bold: true);
+            _gpuDeviceCombo.DropDownStyle = ComboBoxStyle.DropDownList;
+            _gpuDeviceCombo.Items.Clear();
+            foreach (GpuDevice device in _gpuDevices) _gpuDeviceCombo.Items.Add(device);
+            if (_gpuDeviceCombo.Items.Count > 0) _gpuDeviceCombo.SelectedIndex = 0;
+            _gpuDeviceCombo.Location = UiPoint(24, 128);
+            _gpuDeviceCombo.Size = UiSize(Math.Max(280, cardWidth - 168), 34);
+            _gpuDeviceCombo.Font = new Font("Segoe UI", 10);
+            card.Controls.Add(_gpuDeviceCombo);
+
+            _refreshGpuButton.Text = "Найти";
+            StyleSecondaryButton(_refreshGpuButton, new Point(cardWidth - 112, 126), new Size(88, 36));
+            _refreshGpuButton.Enabled = !_miningActive;
+            card.Controls.Add(_refreshGpuButton);
+            string gpuInfo = !File.Exists(AppPaths.GpuMinerPath)
+                ? "В официальном пакете не найден GPU-майнер. Установите программу заново."
+                : _gpuDevices.Count == 0
+                    ? "Нажмите «Найти». Нужна видеокарта с поддерживаемым драйвером."
+                    : $"Найдено видеокарт: {_gpuDevices.Count}. Выберите одну для майнинга.";
+            AddParagraph(gpuInfo, 24, 172, cardWidth - 48, 38);
+        }
+
+        _miningState.Text = _miningActive
+            ? _miningMode == "GPU" ? "Майнинг на видеокарте включён" : $"Майнинг на процессоре включён · потоков: {(int)_threadCount.Value}"
+            : "Майнинг остановлен";
+        _miningState.Location = UiPoint(24, 222);
         _miningState.AutoSize = true;
         _miningState.ForeColor = _miningActive ? Color.FromArgb(53, 119, 74) : Muted;
         card.Controls.Add(_miningState);
 
+        _miningHashrate.Text = _miningActive && _miningMode == "GPU" ? "Скорость: ожидание данных от видеокарты…" : "";
+        _miningHashrate.Location = UiPoint(24, 252);
+        _miningHashrate.Size = UiSize(cardWidth - 48, 24);
+        _miningHashrate.ForeColor = Muted;
+        card.Controls.Add(_miningHashrate);
+
         _mineButton.Text = _miningActive ? "Остановить майнинг" : "Начать майнинг";
-        StylePrimaryButton(_mineButton, new Point(24, 196), new Size(204, 42));
-        _mineButton.Enabled = IsNodeRunning() && File.Exists(AppPaths.WalletPath);
+        StylePrimaryButton(_mineButton, new Point(24, 290), new Size(204, 42));
+        _mineButton.Enabled = IsNodeRunning() && File.Exists(AppPaths.WalletPath) &&
+            (_miningActive || _miningMode == "CPU" || _gpuDeviceCombo.SelectedItem is GpuDevice);
         card.Controls.Add(_mineButton);
 
         if (!IsNodeRunning()) AddParagraph("Сначала запустите ноду на странице «Обзор».", 24, 372, cardWidth - 48, 32);
@@ -469,7 +559,7 @@ internal sealed class MainForm : Form
         else if (!File.Exists(AppPaths.WalletPath)) AddParagraph("Сначала создайте кошелёк на странице «Обзор».", 24, 394, cardWidth - 48, 32);
     }
 
-    private async Task StartNodeAsync()
+    private async Task StartNodeAsync(bool offerWalletCreation = true)
     {
         if (!File.Exists(AppPaths.NodePath))
         {
@@ -477,6 +567,7 @@ internal sealed class MainForm : Form
                 "GeoCoin-Start", MessageBoxButtons.OK, MessageBoxIcon.Error);
             return;
         }
+        if (_nodeProcess is { HasExited: true }) CleanupNodeSession();
         if (_nodeProcess is { HasExited: false }) return;
 
         string? walletPassword = null;
@@ -491,10 +582,14 @@ internal sealed class MainForm : Form
         string sessionDirectory = Path.Combine(Path.GetTempPath(), "geocoin-start-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(sessionDirectory);
         _adminPassword = RandomSecret();
+        _minerPassword = RandomSecret();
+        _sessionDirectory = sessionDirectory;
         string adminFile = Path.Combine(sessionDirectory, "rpc-admin.pass");
+        _minerPassFile = Path.Combine(sessionDirectory, "rpc-miner.pass");
         string? walletFile = existingWallet ? Path.Combine(sessionDirectory, "wallet.pass") : null;
         var secretEncoding = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
         await File.WriteAllTextAsync(adminFile, _adminPassword + Environment.NewLine, secretEncoding);
+        await File.WriteAllTextAsync(_minerPassFile, _minerPassword + Environment.NewLine, secretEncoding);
         if (walletFile is not null) await File.WriteAllTextAsync(walletFile, walletPassword + Environment.NewLine, secretEncoding);
 
         _nodeStatus = "Запускаю ноду…";
@@ -518,6 +613,8 @@ internal sealed class MainForm : Form
             AddArgument(start, "--rpc-port", "3033");
             AddArgument(start, "--rpc-user", "geocoin-start");
             AddArgument(start, "--rpc-pass-file", adminFile);
+            AddArgument(start, "--rpc-miner-user", "geocoin-start-miner");
+            AddArgument(start, "--rpc-miner-pass-file", _minerPassFile);
             AddArgument(start, "--activation-manifest", AppPaths.ProductionManifestPath);
             AddArgument(start, "--status-interval", "30");
             if (walletFile is not null) AddArgument(start, "--wallet-password-file", walletFile);
@@ -550,11 +647,10 @@ internal sealed class MainForm : Form
             }
             if (!ready) throw new TimeoutException("Нода запускается дольше обычного. Проверьте файл журнала и попробуйте ещё раз.");
 
-            try { Directory.Delete(sessionDirectory, recursive: true); } catch { }
             _nodeStatus = "Нода подключена";
             _refreshTimer.Start();
             await RefreshStateAsync();
-            if (!existingWallet)
+            if (!existingWallet && offerWalletCreation)
             {
                 var result = MessageBox.Show(this,
                     "Нода подключена. Создать новый защищённый кошелёк?\n\n" +
@@ -565,8 +661,25 @@ internal sealed class MainForm : Form
         }
         catch (Exception ex)
         {
-            try { Directory.Delete(sessionDirectory, recursive: true); } catch { }
-            _nodeStatus = "Нода не подключена";
+            if (_nodeProcess is { HasExited: false })
+            {
+                try { _nodeProcess.Kill(entireProcessTree: true); await _nodeProcess.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10)); } catch { }
+            }
+            bool stopped = _nodeProcess is null || _nodeProcess.HasExited;
+            if (stopped)
+            {
+                if (_nodeProcess is not null) CleanupNodeSession();
+                else
+                {
+                    try { Directory.Delete(sessionDirectory, recursive: true); } catch { }
+                    _sessionDirectory = null;
+                    _minerPassFile = null;
+                    _minerPassword = null;
+                    _adminPassword = null;
+                }
+                _nodeStatus = "Нода не подключена";
+            }
+            else _nodeStatus = "Нода продолжает работать";
             MessageBox.Show(this, ex.Message + "\n\nЖурнал: " + AppPaths.LogPath,
                 "Не удалось запустить GeoCoin", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
@@ -581,7 +694,8 @@ internal sealed class MainForm : Form
         UpdateStatus();
         try
         {
-            if (_miningActive && _rpc is not null)
+            if (_miningActive && _miningMode == "GPU") await StopGpuMinerAsync();
+            else if (_miningActive && _rpc is not null)
             {
                 try { await _rpc.CallAsync("setgenerate", new object[] { false }); } catch { }
                 _miningActive = false;
@@ -590,6 +704,7 @@ internal sealed class MainForm : Form
             for (int i = 0; i < 200 && !_nodeProcess.HasExited; i++) await Task.Delay(100);
             if (!_nodeProcess.HasExited)
                 throw new TimeoutException("Нода ещё завершает работу. Подождите немного и повторите.");
+            await StopGpuMinerAsync();
             CleanupNodeSession();
             _nodeStatus = "Нода остановлена";
             _balance = 0;
@@ -664,33 +779,353 @@ internal sealed class MainForm : Form
         }
     }
 
+    private async Task RestoreWalletAsync()
+    {
+        if (!IsNodeRunning() || _rpc is null) return;
+        using var dialog = new OpenFileDialog
+        {
+            Title = "Выберите резервную копию кошелька GeoCoin",
+            Filter = "Зашифрованная копия кошелька (*.dat)|*.dat|Все файлы (*.*)|*.*",
+            CheckFileExists = true,
+            Multiselect = false
+        };
+        if (dialog.ShowDialog(this) != DialogResult.OK) return;
+
+        bool replacingWallet = File.Exists(AppPaths.WalletPath);
+        string? preservedWallet = null;
+        string? recoveryCopy = null;
+        bool restored = false;
+        if (replacingWallet && MessageBox.Show(this,
+                "Текущий кошелёк будет заменён. Перед этим GeoCoin-Start создаст его зашифрованную копию и сохранит исходный файл отдельно. Продолжить?",
+                "Заменить кошелёк", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2) != DialogResult.Yes)
+            return;
+
+        try
+        {
+            Directory.CreateDirectory(AppPaths.WalletBackupDirectory);
+            if (replacingWallet)
+            {
+                recoveryCopy = UniqueWalletBackupPath("до-импорта");
+                await _rpc.CallAsync("backupwallet", new[] { recoveryCopy });
+                await StopNodeAsync();
+                if (IsNodeRunning()) throw new InvalidOperationException("Сначала остановите ноду GeoCoin.");
+                preservedWallet = UniqueWalletBackupPath("старый-кошелёк");
+                File.Move(AppPaths.WalletPath, preservedWallet);
+                await StartNodeAsync(offerWalletCreation: false);
+                if (!IsNodeRunning()) throw new InvalidOperationException("Не удалось подготовить ноду для восстановления.");
+            }
+
+            if (_rpc is null) throw new InvalidOperationException("Подключение к ноде потеряно.");
+            await _rpc.CallAsync("restorewallet", new[] { dialog.FileName });
+            restored = true;
+
+            await StopNodeAsync();
+            await StartNodeAsync(offerWalletCreation: false);
+            if (IsNodeRunning())
+            {
+                MessageBox.Show(this,
+                    "Кошелёк восстановлен. После повторного запуска введите его пароль, когда приложение попросит. Синхронизация истории начнётся автоматически.",
+                    "Кошелёк восстановлен", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                await RefreshStateAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            if (!restored && replacingWallet && !string.IsNullOrEmpty(preservedWallet) && File.Exists(preservedWallet))
+            {
+                try
+                {
+                    if (IsNodeRunning()) await StopNodeAsync();
+                    if (File.Exists(AppPaths.WalletPath))
+                    {
+                        string failedImport = UniqueWalletBackupPath("неудачный-импорт");
+                        File.Move(AppPaths.WalletPath, failedImport);
+                    }
+                    File.Move(preservedWallet, AppPaths.WalletPath);
+                    await StartNodeAsync(offerWalletCreation: false);
+                }
+                catch (Exception rollbackError)
+                {
+                    MessageBox.Show(this,
+                        "Восстановление не удалось, и автоматический возврат исходного кошелька завершился ошибкой. Исходный файл сохранён здесь:\n" +
+                        preservedWallet + "\n\n" + rollbackError.Message,
+                        "Проверьте резервную копию", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+            }
+            MessageBox.Show(this,
+                (restored ? "Кошелёк восстановлен, но приложение не смогло автоматически перезапустить ноду. Запустите её вручную.\n\n" : "Не удалось восстановить кошелёк.\n\n") + ex.Message +
+                (recoveryCopy is null ? "" : "\n\nРезервная копия прежнего кошелька сохранена: " + recoveryCopy),
+                restored ? "Восстановление завершено" : "Ошибка восстановления",
+                MessageBoxButtons.OK, restored ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
+        }
+    }
+
+    private static string UniqueWalletBackupPath(string reason)
+        => Path.Combine(AppPaths.WalletBackupDirectory,
+            $"wallet-{reason}-{DateTime.Now:yyyyMMdd-HHmmss}-{Guid.NewGuid():N}.dat");
+
+    private async Task RefreshGpuDevicesAsync()
+    {
+        if (_miningActive) return;
+        if (!File.Exists(AppPaths.GpuMinerPath))
+        {
+            MessageBox.Show(this, "GPU-майнер не найден. Переустановите GeoCoin-Start, чтобы получить официальный пакет целиком.",
+                "GPU-майнер недоступен", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        _refreshGpuButton.Enabled = false;
+        _miningHashrate.Text = "Проверяю видеокарты…";
+        try
+        {
+            var start = new ProcessStartInfo
+            {
+                FileName = AppPaths.GpuMinerPath,
+                WorkingDirectory = AppPaths.OfficialDirectory,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true
+            };
+            start.ArgumentList.Add("--list-devices");
+            start.ArgumentList.Add("--stats-json");
+            using var process = new Process { StartInfo = start };
+            if (!process.Start()) throw new InvalidOperationException("Windows не запустил проверку видеокарт.");
+            Task<string> stdout = process.StandardOutput.ReadToEndAsync();
+            Task<string> stderr = process.StandardError.ReadToEndAsync();
+            try { await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(20)); }
+            catch
+            {
+                try { process.Kill(entireProcessTree: true); await process.WaitForExitAsync(); } catch { }
+                throw;
+            }
+            string output = await stdout;
+            string error = await stderr;
+            if (process.ExitCode != 0 && string.IsNullOrWhiteSpace(output))
+                throw new InvalidOperationException(string.IsNullOrWhiteSpace(error) ? "Не удалось проверить видеокарты." : error.Trim());
+
+            _gpuDevices.Clear();
+            foreach (string line in output.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
+            {
+                try
+                {
+                    using JsonDocument document = JsonDocument.Parse(line);
+                    JsonElement root = document.RootElement;
+                    if (!root.TryGetProperty("devices", out JsonElement devices) || devices.ValueKind != JsonValueKind.Array) continue;
+                    foreach (JsonElement device in devices.EnumerateArray())
+                    {
+                        string backend = device.TryGetProperty("backend", out JsonElement backendValue) ? backendValue.GetString() ?? "" : "";
+                        string id = device.TryGetProperty("id", out JsonElement idValue)
+                            ? idValue.ValueKind == JsonValueKind.String ? idValue.GetString() ?? "0" : idValue.ToString()
+                            : "0";
+                        string name = device.TryGetProperty("name", out JsonElement nameValue) ? nameValue.GetString() ?? "Видеокарта" : "Видеокарта";
+                        if (!string.IsNullOrWhiteSpace(backend)) _gpuDevices.Add(new GpuDevice(backend, id, name));
+                    }
+                }
+                catch (JsonException) { }
+            }
+            _gpuDevices.Sort((left, right) => string.Compare(left.ToString(), right.ToString(), StringComparison.CurrentCultureIgnoreCase));
+            _miningHashrate.Text = _gpuDevices.Count == 0
+                ? "Совместимая видеокарта не найдена. Проверьте драйвер видеокарты."
+                : $"Обнаружено видеокарт: {_gpuDevices.Count}.";
+            BuildPage();
+        }
+        catch (Exception ex)
+        {
+            _miningHashrate.Text = "Не удалось проверить видеокарту.";
+            MessageBox.Show(this, ex.Message, "Проверка GPU", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+        finally
+        {
+            _refreshGpuButton.Enabled = true;
+        }
+    }
+
     private async Task ToggleMiningAsync()
     {
         if (!IsNodeRunning() || _rpc is null) return;
-        if (!_miningActive)
+        if (_miningActive)
         {
-            string warning = $"Запустить майнинг на {(int)_threadCount.Value} потоках?\n\n" +
-                             "Это увеличит нагрузку, нагрев и расход электричества. Майнинг будет идти на адрес основного кошелька.";
-            if (MessageBox.Show(this, warning, "Начать майнинг", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
-                return;
-        }
-        try
-        {
-            if (_miningActive)
+            if (_miningMode == "GPU") await StopGpuMinerAsync();
+            else
             {
                 await _rpc.CallAsync("setgenerate", new object[] { false });
                 _miningActive = false;
             }
-            else
-            {
-                await _rpc.CallAsync("setgenerate", new object[] { true, (int)_threadCount.Value });
-                _miningActive = true;
-            }
+            BuildPage();
+            return;
+        }
+
+        if (_miningMode == "GPU")
+        {
+            await StartGpuMiningAsync();
+            return;
+        }
+
+        string warning = $"Запустить майнинг на {(int)_threadCount.Value} потоках процессора?\n\n" +
+                         "Это увеличит нагрузку, нагрев и расход электричества.";
+        if (MessageBox.Show(this, warning, "Начать майнинг", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
+            return;
+        try
+        {
+            await _rpc.CallAsync("setgenerate", new object[] { true, (int)_threadCount.Value });
+            _miningActive = true;
+            _miningMode = "CPU";
             BuildPage();
         }
         catch (Exception ex)
         {
             MessageBox.Show(this, ex.Message, "Не удалось изменить майнинг", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+    }
+
+    private async Task StartGpuMiningAsync()
+    {
+        if (!IsNodeRunning() || _rpc is null || _minerPassFile is null || !File.Exists(_minerPassFile)) return;
+        if (!File.Exists(AppPaths.GpuMinerPath))
+        {
+            MessageBox.Show(this, "GPU-майнер не найден. Переустановите GeoCoin-Start, чтобы получить официальный пакет целиком.",
+                "GPU-майнинг недоступен", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+        if (_gpuDeviceCombo.SelectedItem is not GpuDevice device)
+        {
+            MessageBox.Show(this, "Сначала нажмите «Найти» и выберите видеокарту.",
+                "Видеокарта не выбрана", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        string? password = PasswordDialog.AskForAction(this, "создать адрес для майнинга");
+        if (password is null) return;
+        string warning = $"Начать майнинг на видеокарте «{device.Name}»?\n\n" +
+                         "Видеокарта будет работать с высокой нагрузкой и может нагреваться. Создадим отдельный адрес получения награды в вашем кошельке.";
+        if (MessageBox.Show(this, warning, "Начать GPU-майнинг", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
+            return;
+
+        try
+        {
+            JsonElement addressResult = await _rpc.CallAsync("getnewaddress", new object[] { "Майнинг", password });
+            string address = addressResult.ValueKind == JsonValueKind.String ? addressResult.GetString() ?? "" : addressResult.ToString();
+            if (string.IsNullOrWhiteSpace(address)) throw new InvalidOperationException("Не удалось создать адрес награды.");
+
+            var start = new ProcessStartInfo
+            {
+                FileName = AppPaths.GpuMinerPath,
+                WorkingDirectory = AppPaths.OfficialDirectory,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                RedirectStandardInput = true
+            };
+            AddArgument(start, "--url", "http://127.0.0.1:3033/");
+            AddArgument(start, "--rpc-user", "geocoin-start-miner");
+            AddArgument(start, "--rpc-pass-file", _minerPassFile);
+            AddArgument(start, "--address", address);
+            AddArgument(start, "--backend", device.Backend);
+            AddArgument(start, "--devices", device.Id);
+            start.ArgumentList.Add("--continuous");
+            start.ArgumentList.Add("--control-stdin");
+            start.ArgumentList.Add("--stats-json");
+
+            var miner = new Process { StartInfo = start, EnableRaisingEvents = true };
+            miner.OutputDataReceived += (_, e) => HandleGpuMinerLine(e.Data);
+            miner.ErrorDataReceived += (_, e) => WriteNodeLog("[GPU] " + e.Data);
+            miner.Exited += (_, _) =>
+            {
+                try
+                {
+                    if (IsDisposed || !IsHandleCreated) return;
+                    BeginInvoke((Action)(() =>
+                    {
+                        if (!ReferenceEquals(_gpuMinerProcess, miner)) return;
+                        _gpuMinerProcess = null;
+                        _miningActive = false;
+                        _miningHashrate.Text = "GPU-майнинг завершён.";
+                        if (!IsDisposed && _currentPage == "mining") BuildPage();
+                    }));
+                }
+                catch (InvalidOperationException) { }
+            };
+            if (!miner.Start()) throw new InvalidOperationException("Windows не запустил GPU-майнер.");
+            _gpuMinerProcess = miner;
+            miner.BeginOutputReadLine();
+            miner.BeginErrorReadLine();
+            if (miner.HasExited)
+            {
+                _gpuMinerProcess = null;
+                throw new InvalidOperationException("GPU-майнер завершился сразу после запуска. Проверьте драйвер видеокарты.");
+            }
+            _miningMode = "GPU";
+            _miningActive = true;
+            _lastAddress = address;
+            _miningHashrate.Text = "GPU-майнинг запущен. Ожидаю данные о скорости…";
+            BuildPage();
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, ex.Message, "Не удалось запустить GPU-майнинг", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+    }
+
+    private void HandleGpuMinerLine(string? line)
+    {
+        if (string.IsNullOrWhiteSpace(line)) return;
+        try
+        {
+            using JsonDocument document = JsonDocument.Parse(line);
+            JsonElement root = document.RootElement;
+            string eventName = root.TryGetProperty("event", out JsonElement eventValue) ? eventValue.GetString() ?? "" : "";
+            if (eventName == "error")
+            {
+                string message = root.TryGetProperty("message", out JsonElement msg) ? msg.GetString() ?? "Ошибка GPU-майнера" : "Ошибка GPU-майнера";
+                if (!IsDisposed && IsHandleCreated) BeginInvoke((Action)(() => _miningHashrate.Text = message));
+            }
+            else if (eventName == "status")
+            {
+                string rate = "";
+                if (root.TryGetProperty("hashrate", out JsonElement rateValue))
+                    rate = rateValue.ValueKind == JsonValueKind.String ? rateValue.GetString() ?? "" : rateValue.ToString();
+                string state = root.TryGetProperty("message", out JsonElement stateValue) ? stateValue.GetString() ?? "" : "";
+                if (IsDisposed || !IsHandleCreated) return;
+                BeginInvoke((Action)(() =>
+                {
+                    if (!IsDisposed && _currentPage == "mining")
+                        _miningHashrate.Text = string.IsNullOrWhiteSpace(rate) ? state : $"Скорость: {rate} хеш/с";
+                }));
+            }
+        }
+        catch (JsonException) { WriteNodeLog("[GPU] " + line); }
+        catch (InvalidOperationException) { }
+    }
+
+    private async Task StopGpuMinerAsync()
+    {
+        Process? miner = _gpuMinerProcess;
+        if (miner is null)
+        {
+            _miningActive = false;
+            return;
+        }
+        try
+        {
+            if (!miner.HasExited)
+            {
+                try
+                {
+                    await miner.StandardInput.WriteLineAsync("stop");
+                    await miner.StandardInput.FlushAsync();
+                    await miner.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(15));
+                }
+                catch (TimeoutException) { miner.Kill(entireProcessTree: true); await miner.WaitForExitAsync(); }
+                catch (InvalidOperationException) { }
+            }
+        }
+        finally
+        {
+            if (ReferenceEquals(_gpuMinerProcess, miner)) _gpuMinerProcess = null;
+            try { miner.Dispose(); } catch { }
+            _miningActive = false;
         }
     }
 
@@ -875,13 +1310,26 @@ internal sealed class MainForm : Form
         _rpc?.Dispose();
         _rpc = null;
         _adminPassword = null;
+        _minerPassword = null;
+        _minerPassFile = null;
         _miningActive = false;
+        if (_gpuMinerProcess is { } miner)
+        {
+            try { if (!miner.HasExited) miner.Kill(entireProcessTree: true); } catch { }
+            try { miner.Dispose(); } catch { }
+            _gpuMinerProcess = null;
+        }
         _logWriter?.Dispose();
         _logWriter = null;
         if (_nodeProcess is { HasExited: true })
         {
             _nodeProcess.Dispose();
             _nodeProcess = null;
+        }
+        if (_nodeProcess is null && !string.IsNullOrWhiteSpace(_sessionDirectory))
+        {
+            try { Directory.Delete(_sessionDirectory, recursive: true); } catch { }
+            _sessionDirectory = null;
         }
     }
 
