@@ -5,7 +5,10 @@ using System.Net.NetworkInformation;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Drawing.Imaging;
 using QRCoder;
+using ZXing.Common;
+using ZXing.Windows.Compatibility;
 
 namespace GeoCoinStart;
 
@@ -15,6 +18,8 @@ internal sealed class MainForm : Form
     {
         public override string ToString() => $"{Name} — {Backend.ToUpperInvariant()} · {Id}";
     }
+
+    private sealed record FeeEstimate(decimal ApproximateGc, decimal MinimumGc, decimal RateGcPerKb, int AssumedBytes);
 
     private sealed record MinedBlockRecord(string BlockId, string TransactionId, long Timestamp, string Source);
     private sealed class MinedBlockLedger
@@ -108,6 +113,26 @@ internal sealed class MainForm : Form
         ["Выберите существующий адрес или создайте новый. Покажите его отправителю или дайте отсканировать QR-код."] = "Choose an existing address or create a new one. Share it with the sender or let them scan the QR code.",
         ["АДРЕС ДЛЯ ПОЛУЧЕНИЯ"] = "RECEIVE ADDRESS", ["Новый адрес появится здесь"] = "A new address will appear here", ["В кошельке пока нет адреса"] = "This wallet has no address yet",
         ["Создать новый адрес"] = "Create new address", ["Копировать адрес"] = "Copy address", ["QR содержит только адрес"] = "QR code contains the address only",
+        ["Сохранить QR-код"] = "Save QR code", ["Импортировать QR"] = "Import QR", ["Открыть обзор"] = "Open overview",
+        ["На этой странице пока нет данных."] = "There is no data on this page yet.", ["Кошелёк не открыт"] = "Wallet is not open",
+        ["Чтобы показать адреса и QR-код, сначала запустите ноду. Затем создайте или откройте кошелёк."] = "Start the node to view addresses and QR codes, then create or open a wallet.",
+        ["Чтобы получить монеты, создайте новый кошелёк или импортируйте существующий на странице «Обзор»."] = "To receive coins, create a wallet or import an existing one on the Overview page.",
+        ["История появится после запуска ноды и подключения кошелька. Запустите ноду на странице «Обзор»."] = "History will appear after you start the node and connect a wallet. Start it on the Overview page.",
+        ["Создайте или импортируйте кошелёк на странице «Обзор», чтобы загрузить историю переводов и наград."] = "Create or import a wallet on the Overview page to load transfers and mining rewards.",
+        ["Для управления кошельком запустите ноду на странице «Обзор»."] = "Start the node on the Overview page to manage the wallet.",
+        ["Создайте или импортируйте кошелёк на странице «Обзор», чтобы управлять резервными копиями и ключами."] = "Create or import a wallet on the Overview page to manage backups and keys.",
+        ["Нода остановлена. Можно подготовить адрес и сумму; для отправки сначала запустите ноду на странице «Обзор»."] = "The node is stopped. You can prepare the address and amount; start the node on the Overview page to send.",
+        ["Откройте или создайте кошелёк на странице «Обзор», чтобы отправлять монеты."] = "Open or create a wallet on the Overview page to send coins.",
+        ["Введите адрес получателя или загрузите QR-код. Перед отправкой проверьте сумму и оценку комиссии."] = "Enter the recipient address or load a QR code. Check the amount and fee estimate before sending.",
+        ["Рассчитываю оценку комиссии…"] = "Calculating fee estimate…", ["Комиссия появится после запуска ноды."] = "Fee estimate will appear when the node is running.",
+        ["Сумма ориентировочная; GeoCoin рассчитывает комиссию по размеру транзакции."] = "This is an estimate; GeoCoin calculates the final fee from the transaction size.",
+        ["Оценка комиссии рассчитана для обычной транзакции и может отличаться от точной суммы."] = "The estimate uses a typical transaction and may differ from the final fee.",
+        ["Сохранить QR-код адреса"] = "Save address QR code", ["Выберите изображение с QR-кодом GeoCoin"] = "Choose an image containing a GeoCoin QR code",
+        ["QR-код сохранён как изображение PNG."] = "QR code saved as a PNG image.", ["Адрес загружен из QR-кода. Перед отправкой проверьте адрес и сумму."] = "Address loaded from QR code. Check the address and amount before sending.",
+        ["В выбранном изображении не найден QR-код."] = "No QR code was found in the selected image.", ["QR-код не содержит корректный адрес GeoCoin."] = "The QR code does not contain a valid GeoCoin address.",
+        ["Этот QR-код содержит адрес другой сети или неверный адрес."] = "This QR code contains an invalid address or an address for another network.", ["QR-код не содержит адрес GeoCoin."] = "The QR code does not contain a GeoCoin address.",
+        ["Сначала запустите ноду, чтобы рассчитать комиссию."] = "Start the node to calculate the fee.", ["Нода не сообщила минимальную комиссию."] = "The node did not provide a minimum fee.",
+        ["Не удалось получить оценку комиссии."] = "Could not get a fee estimate.",
         ["Адрес создан. Его можно скопировать или отсканировать QR-код."] = "Address created. Copy it or scan the QR code.", ["Адрес скопирован. Теперь его можно отправить отправителю."] = "Address copied. You can now share it with the sender.",
         ["Загружаю адреса текущего кошелька…"] = "Loading addresses from this wallet…", ["Выберите адрес для перевода или создайте новый. QR-код содержит только адрес."] = "Choose an address or create one. The QR code contains the address only.",
         ["В кошельке нет адресов. Создайте новый адрес для получения монет."] = "This wallet has no addresses. Create one to receive coins.", ["Не удалось загрузить адреса кошелька: "] = "Could not load wallet addresses: ",
@@ -216,6 +241,9 @@ internal sealed class MainForm : Form
     private readonly Label _sendMessage = new();
     private readonly Label _receiveAddress = new();
     private readonly Label _receiveMessage = new();
+    private readonly Label _receiveQrCaption = new();
+    private readonly Label _sendFeeEstimate = new();
+    private readonly Label _sendFeeHint = new();
     private readonly Label _overviewHint = new();
     private readonly Button _nodeButton = new();
     private readonly Button _walletButton = new();
@@ -225,8 +253,11 @@ internal sealed class MainForm : Form
     private readonly Button _sendButton = new();
     private readonly Button _receiveButton = new();
     private readonly Button _receiveCopyButton = new();
+    private readonly Button _saveReceiveQrButton = new();
+    private readonly Button _importPaymentQrButton = new();
     private readonly Button[] _navigation = new Button[8];
     private readonly System.Windows.Forms.Timer _refreshTimer = new() { Interval = 4000 };
+    private readonly System.Windows.Forms.Timer _sendFeeRefreshTimer = new() { Interval = 450 };
     private readonly object _minedBlocksLock = new();
     private readonly List<MinedBlockRecord> _minedBlockRecords = new();
     private readonly HashSet<string> _miningSessionBlockIds = new(StringComparer.OrdinalIgnoreCase);
@@ -283,6 +314,7 @@ internal sealed class MainForm : Form
     private bool _closePromptOpen;
     private bool _darkTheme;
     private bool _englishUi;
+    private bool _refreshingSendFee;
     private int _lastPageViewportWidth;
     private int _selectedThreads = Math.Max(1, Environment.ProcessorCount / 2);
 
@@ -358,6 +390,18 @@ internal sealed class MainForm : Form
         _sendButton.Click += async (_, _) => await SendAsync();
         _receiveButton.Click += async (_, _) => await CreateReceiveAddressAsync();
         _receiveCopyButton.Click += (_, _) => CopyReceiveAddress();
+        _saveReceiveQrButton.Click += (_, _) => SaveReceiveQrCode();
+        _importPaymentQrButton.Click += (_, _) => ImportPaymentQrFromImage();
+        _sendAmount.TextChanged += (_, _) =>
+        {
+            _sendFeeRefreshTimer.Stop();
+            _sendFeeRefreshTimer.Start();
+        };
+        _sendFeeRefreshTimer.Tick += async (_, _) =>
+        {
+            _sendFeeRefreshTimer.Stop();
+            await RefreshSendFeeEstimateAsync();
+        };
         _refreshTransactionsButton.Click += async (_, _) => await RefreshTransactionsAsync();
         _copyTransactionIdButton.Click += (_, _) => CopySelectedTransactionId();
         _walletFileExportButton.Click += async (_, _) => await BackupWalletAsync();
@@ -1134,43 +1178,76 @@ internal sealed class MainForm : Form
     {
         int cardWidth = PageCardWidth(700);
         int fieldWidth = cardWidth - 60;
-        AddParagraph("Введите адрес получателя и сумму. Перед отправкой приложение покажет итоговое подтверждение.", 22, 12, cardWidth, 48);
-        Panel card = AddCard(22, 78, cardWidth, 424);
-        AddLabel(card, "Адрес получателя", 26, 22, fieldWidth, 22, Ink, 11, bold: true);
-        StyleTextBox(_sendAddress, new Point(26, 51), new Size(fieldWidth, 36));
+        string pageHint = !IsNodeRunning()
+            ? "Нода остановлена. Можно подготовить адрес и сумму; для отправки сначала запустите ноду на странице «Обзор»."
+            : !File.Exists(AppPaths.WalletPath)
+                ? "Откройте или создайте кошелёк на странице «Обзор», чтобы отправлять монеты."
+                : "Введите адрес получателя или загрузите QR-код. Перед отправкой проверьте сумму и оценку комиссии.";
+        AddParagraph(pageHint, 22, 12, cardWidth, 48);
+        Panel card = AddCard(22, 78, cardWidth, 454);
+        AddLabel(card, "Адрес получателя", 26, 18, fieldWidth, 22, Ink, 11, bold: true);
+        int addressInputWidth = Math.Max(220, fieldWidth - 160);
+        StyleTextBox(_sendAddress, new Point(26, 47), new Size(addressInputWidth, 36));
         _sendAddress.PlaceholderText = "Адрес GeoCoin получателя";
         card.Controls.Add(_sendAddress);
+        _importPaymentQrButton.Text = "Импортировать QR";
+        StyleSecondaryButton(_importPaymentQrButton, new Point(cardWidth - 164, 47), new Size(138, 36));
+        _importPaymentQrButton.Enabled = true;
+        card.Controls.Add(_importPaymentQrButton);
 
-        AddLabel(card, "Сумма, GC", 26, 112, 200, 22, Ink, 11, bold: true);
-        StyleTextBox(_sendAmount, new Point(26, 141), new Size(Math.Min(220, fieldWidth), 36));
+        AddLabel(card, "Сумма, GC", 26, 99, 200, 22, Ink, 11, bold: true);
+        StyleTextBox(_sendAmount, new Point(26, 128), new Size(Math.Min(220, fieldWidth), 36));
         _sendAmount.PlaceholderText = "Например, 1,25";
         card.Controls.Add(_sendAmount);
 
-        AddLabel(card, "Пароль кошелька", 26, 198, 220, 22, Ink, 11, bold: true);
-        StyleTextBox(_sendPassword, new Point(26, 227), new Size(Math.Min(320, fieldWidth), 36));
+        _sendFeeEstimate.Text = IsNodeRunning() ? "Рассчитываю оценку комиссии…" : "Комиссия появится после запуска ноды.";
+        _sendFeeEstimate.Location = UiPoint(26, 177);
+        _sendFeeEstimate.Size = UiSize(fieldWidth, 24);
+        _sendFeeEstimate.ForeColor = Ink;
+        _sendFeeEstimate.Font = new Font("Segoe UI Semibold", 10, FontStyle.Bold);
+        card.Controls.Add(_sendFeeEstimate);
+        _sendFeeHint.Text = "Сумма ориентировочная; GeoCoin рассчитывает комиссию по размеру транзакции.";
+        _sendFeeHint.Location = UiPoint(26, 202);
+        _sendFeeHint.Size = UiSize(fieldWidth, 42);
+        _sendFeeHint.ForeColor = Muted;
+        _sendFeeHint.Font = new Font("Segoe UI", 9);
+        card.Controls.Add(_sendFeeHint);
+
+        AddLabel(card, "Пароль кошелька", 26, 249, 220, 22, Ink, 11, bold: true);
+        StyleTextBox(_sendPassword, new Point(26, 278), new Size(Math.Min(320, fieldWidth), 36));
         _sendPassword.UseSystemPasswordChar = true;
+        _sendPassword.Enabled = IsNodeRunning() && File.Exists(AppPaths.WalletPath);
         card.Controls.Add(_sendPassword);
 
-        AddLabel(card, "Комиссия рассчитается автоматически. Отправленную транзакцию нельзя отменить.",
-            26, 282, fieldWidth, 44, Muted, 9.5f);
         _sendButton.Text = "Проверить и отправить";
-        StylePrimaryButton(_sendButton, new Point(26, 344), new Size(228, 42));
+        StylePrimaryButton(_sendButton, new Point(26, 329), new Size(228, 42));
         _sendButton.Enabled = IsNodeRunning() && File.Exists(AppPaths.WalletPath);
         card.Controls.Add(_sendButton);
 
-        _sendMessage.Location = UiPoint(26, 390);
-        _sendMessage.Size = UiSize(fieldWidth, 24);
+        _sendMessage.Location = UiPoint(26, 379);
+        _sendMessage.Size = UiSize(fieldWidth, 48);
         _sendMessage.ForeColor = Muted;
         card.Controls.Add(_sendMessage);
+        if (IsNodeRunning() && File.Exists(AppPaths.WalletPath)) _ = RefreshSendFeeEstimateAsync();
     }
 
     private void BuildReceivePage()
     {
+        if (!IsNodeRunning() || !File.Exists(AppPaths.WalletPath))
+        {
+            BuildUnavailableState(
+                !IsNodeRunning() ? "Нода остановлена" : "Кошелёк не открыт",
+                !IsNodeRunning()
+                    ? "Чтобы показать адреса и QR-код, сначала запустите ноду. Затем создайте или откройте кошелёк."
+                    : "Чтобы получить монеты, создайте новый кошелёк или импортируйте существующий на странице «Обзор».");
+            return;
+        }
+
         int cardWidth = PageCardWidth(700);
         bool compact = cardWidth < 650;
         int addressWidth = Math.Max(220, cardWidth - 260);
         AddParagraph("Выберите существующий адрес или создайте новый. Покажите его отправителю или дайте отсканировать QR-код.", 22, 12, cardWidth, 48);
-        Panel card = AddCard(22, 78, cardWidth, 322);
+        Panel card = AddCard(22, 78, cardWidth, compact ? 390 : 322);
         AddLabel(card, "АДРЕС ДЛЯ ПОЛУЧЕНИЯ", 26, 20, addressWidth, 22, Muted, 9, bold: true);
         _receiveAddressCombo.DropDownStyle = ComboBoxStyle.DropDownList;
         _receiveAddressCombo.Location = UiPoint(26, 50);
@@ -1194,15 +1271,21 @@ internal sealed class MainForm : Form
 
         _receiveCopyButton.Text = "Копировать адрес";
         StyleSecondaryButton(_receiveCopyButton,
-            UiPoint(compact ? 26 : 230, compact ? 218 : 168), UiSize(180, 42));
+            new Point(compact ? 26 : 230, compact ? 218 : 168), new Size(180, 42));
         _receiveCopyButton.Enabled = !string.IsNullOrWhiteSpace(_lastAddress);
         card.Controls.Add(_receiveCopyButton);
+
+        _saveReceiveQrButton.Text = "Сохранить QR-код";
+        StyleSecondaryButton(_saveReceiveQrButton,
+            new Point(26, compact ? 268 : 218), new Size(180, 38));
+        _saveReceiveQrButton.Enabled = !string.IsNullOrWhiteSpace(_lastAddress);
+        card.Controls.Add(_saveReceiveQrButton);
 
         _receiveMessage.Text = IsNodeRunning() && File.Exists(AppPaths.WalletPath)
             ? "Загружаю адреса текущего кошелька…"
             : "Адреса появятся после запуска ноды и открытия кошелька.";
-        _receiveMessage.Location = UiPoint(26, compact ? 270 : 226);
-        _receiveMessage.Size = UiSize(addressWidth, compact ? 42 : 54);
+        _receiveMessage.Location = UiPoint(26, compact ? 318 : 270);
+        _receiveMessage.Size = UiSize(addressWidth, compact ? 56 : 42);
         _receiveMessage.ForeColor = Muted;
         card.Controls.Add(_receiveMessage);
 
@@ -1211,24 +1294,28 @@ internal sealed class MainForm : Form
         _receiveQrCode.SizeMode = PictureBoxSizeMode.Zoom;
         _receiveQrCode.BackColor = Color.White;
         card.Controls.Add(_receiveQrCode);
-        var qrCaption = new Label
-        {
-            Text = "QR содержит только адрес",
-            Location = UiPoint(cardWidth - 196, 211),
-            Size = UiSize(162, 38),
-            TextAlign = ContentAlignment.TopCenter,
-            ForeColor = Muted,
-            Font = new Font("Segoe UI", 8.5f)
-        };
-        card.Controls.Add(qrCaption);
-
-        if (!IsNodeRunning()) AddParagraph("Сначала запустите ноду на странице «Обзор».", 24, 422, cardWidth - 48, 32);
-        else if (!File.Exists(AppPaths.WalletPath)) AddParagraph("Сначала создайте или импортируйте кошелёк на странице «Обзор».", 24, 422, cardWidth - 48, 32);
+        _receiveQrCaption.Text = "QR содержит только адрес";
+        _receiveQrCaption.Location = UiPoint(cardWidth - 196, 211);
+        _receiveQrCaption.Size = UiSize(162, 38);
+        _receiveQrCaption.TextAlign = ContentAlignment.TopCenter;
+        _receiveQrCaption.ForeColor = Muted;
+        _receiveQrCaption.Font = new Font("Segoe UI", 8.5f);
+        card.Controls.Add(_receiveQrCaption);
         UpdateReceiveAddressDisplay();
     }
 
     private void BuildTransactionsPage()
     {
+        if (!IsNodeRunning() || !File.Exists(AppPaths.WalletPath))
+        {
+            BuildUnavailableState(
+                !IsNodeRunning() ? "Нода остановлена" : "Кошелёк не открыт",
+                !IsNodeRunning()
+                    ? "История появится после запуска ноды и подключения кошелька. Запустите ноду на странице «Обзор»."
+                    : "Создайте или импортируйте кошелёк на странице «Обзор», чтобы загрузить историю переводов и наград.");
+            return;
+        }
+
         int cardWidth = PageCardWidth(700);
         AddParagraph("История входящих переводов, отправок и наград за майнинг.", 22, 12, cardWidth - 130, 38);
         _refreshTransactionsButton.Text = "Обновить";
@@ -1299,8 +1386,31 @@ internal sealed class MainForm : Form
         card.Controls.Add(_transactionStatus);
     }
 
+    private void BuildUnavailableState(string heading, string explanation)
+    {
+        int cardWidth = PageCardWidth(700);
+        AddParagraph("На этой странице пока нет данных.", 22, 12, cardWidth, 40);
+        Panel card = AddCard(22, 66, cardWidth, 226);
+        AddLabel(card, heading, 26, 28, cardWidth - 64, 34, Ink, 18, bold: true);
+        AddLabel(card, explanation, 26, 76, cardWidth - 64, 58, Muted, 10);
+        var openOverview = new Button { Text = "Открыть обзор" };
+        StylePrimaryButton(openOverview, new Point(26, 154), new Size(192, 42));
+        openOverview.Click += (_, _) => SetPage("overview");
+        card.Controls.Add(openOverview);
+    }
+
     private void BuildWalletPage()
     {
+        if (!IsNodeRunning() || !File.Exists(AppPaths.WalletPath))
+        {
+            BuildUnavailableState(
+                !IsNodeRunning() ? "Нода остановлена" : "Кошелёк не открыт",
+                !IsNodeRunning()
+                    ? "Для управления кошельком запустите ноду на странице «Обзор»."
+                    : "Создайте или импортируйте кошелёк на странице «Обзор», чтобы управлять резервными копиями и ключами.");
+            return;
+        }
+
         int cardWidth = PageCardWidth(700);
         int contentWidth = cardWidth - 48;
         AddParagraph("Резервная копия сохраняет весь кошелёк. Приватный ключ относится только к одному адресу.", 22, 12, cardWidth, 42);
@@ -2649,6 +2759,116 @@ internal sealed class MainForm : Form
         _receiveMessage.Text = "Адрес скопирован. Теперь его можно отправить отправителю.";
     }
 
+    private void SaveReceiveQrCode()
+    {
+        if (_receiveQrCode.Image is not Image qrImage || _receiveAddressCombo.SelectedItem is not string) return;
+        using var dialog = new SaveFileDialog
+        {
+            Title = _englishUi ? "Save GeoCoin address QR code" : "Сохранить QR-код адреса",
+            FileName = "GeoCoin-address.png",
+            Filter = "Изображение PNG (*.png)|*.png",
+            AddExtension = true,
+            DefaultExt = "png",
+            OverwritePrompt = true
+        };
+        if (dialog.ShowDialog(this) != DialogResult.OK) return;
+        try
+        {
+            qrImage.Save(dialog.FileName, ImageFormat.Png);
+            _receiveMessage.Text = "QR-код сохранён как изображение PNG.";
+            _receiveMessage.ForeColor = Success;
+            ApplyUiLanguage(_receiveMessage);
+        }
+        catch (Exception ex)
+        {
+            _receiveMessage.Text = "Не удалось сохранить QR-код: " + ex.Message;
+            _receiveMessage.ForeColor = Error;
+            ApplyUiLanguage(_receiveMessage);
+        }
+    }
+
+    private async void ImportPaymentQrFromImage()
+    {
+        using var dialog = new OpenFileDialog
+        {
+            Title = _englishUi ? "Choose an image containing a GeoCoin QR code" : "Выберите изображение с QR-кодом GeoCoin",
+            Filter = "Изображения (*.png;*.jpg;*.jpeg;*.bmp;*.gif)|*.png;*.jpg;*.jpeg;*.bmp;*.gif|Все файлы (*.*)|*.*",
+            CheckFileExists = true,
+            Multiselect = false
+        };
+        if (dialog.ShowDialog(this) != DialogResult.OK) return;
+
+        try
+        {
+            string payload;
+            using (Image source = Image.FromFile(dialog.FileName))
+            using (var bitmap = new Bitmap(source))
+            {
+                var reader = new BarcodeReader
+                {
+                    AutoRotate = true,
+                    Options = new DecodingOptions { TryHarder = true }
+                };
+                payload = reader.Decode(bitmap)?.Text?.Trim() ?? "";
+            }
+            if (payload.Length == 0)
+                throw new InvalidOperationException("В выбранном изображении не найден QR-код.");
+
+            string address = payload;
+            string? amountText = null;
+            if (payload.StartsWith("geocoin:", StringComparison.OrdinalIgnoreCase))
+            {
+                string body = payload["geocoin:".Length..].TrimStart('/');
+                int queryIndex = body.IndexOf('?');
+                if (queryIndex >= 0)
+                {
+                    string query = body[(queryIndex + 1)..];
+                    body = body[..queryIndex];
+                    foreach (string parameter in query.Split('&', StringSplitOptions.RemoveEmptyEntries))
+                    {
+                        string[] pair = parameter.Split('=', 2);
+                        if (pair.Length == 2 && Uri.UnescapeDataString(pair[0]).Equals("amount", StringComparison.OrdinalIgnoreCase))
+                            amountText = Uri.UnescapeDataString(pair[1]);
+                    }
+                }
+                address = Uri.UnescapeDataString(body.TrimEnd('/'));
+            }
+            if (address.Length < 20 || address.Any(char.IsWhiteSpace))
+                throw new InvalidOperationException("QR-код не содержит корректный адрес GeoCoin.");
+
+            if (_rpc is not null && IsNodeRunning())
+            {
+                JsonElement validation = await _rpc.CallAsync("validateaddress", new object[] { address });
+                if (validation.ValueKind != JsonValueKind.Object ||
+                    !validation.TryGetProperty("isvalid", out JsonElement isValid) || isValid.ValueKind != JsonValueKind.True ||
+                    !validation.TryGetProperty("isgeocoin", out JsonElement isGeoCoin) || isGeoCoin.ValueKind != JsonValueKind.True)
+                    throw new InvalidOperationException("Этот QR-код содержит адрес другой сети или неверный адрес.");
+            }
+            else if (!address.StartsWith("GEO", StringComparison.OrdinalIgnoreCase) || address.Any(character => !char.IsLetterOrDigit(character)))
+            {
+                throw new InvalidOperationException("QR-код не содержит адрес GeoCoin.");
+            }
+
+            _sendAddress.Text = address;
+            if (!string.IsNullOrWhiteSpace(amountText))
+            {
+                string normalizedAmount = amountText.Trim().Replace(',', '.');
+                if (decimal.TryParse(normalizedAmount, NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out decimal amount) &&
+                    amount > 0 && decimal.Round(amount, 8) == amount)
+                    _sendAmount.Text = amount.ToString("0.########", CultureInfo.InvariantCulture);
+            }
+            _sendMessage.Text = "Адрес загружен из QR-кода. Перед отправкой проверьте адрес и сумму.";
+            _sendMessage.ForeColor = Success;
+            ApplyUiLanguage(_sendMessage);
+        }
+        catch (Exception ex)
+        {
+            _sendMessage.Text = "Не удалось импортировать QR-код: " + ex.Message;
+            _sendMessage.ForeColor = Error;
+            ApplyUiLanguage(_sendMessage);
+        }
+    }
+
     private async Task RefreshReceiveAddressesAsync(string? preferredAddress = null)
     {
         if (_loadingReceiveAddresses || _rpc is null || _currentPage != "receive" || !File.Exists(AppPaths.WalletPath)) return;
@@ -2699,11 +2919,17 @@ internal sealed class MainForm : Form
         string? address = _receiveAddressCombo.SelectedItem as string ?? _lastAddress;
         _receiveAddress.Text = string.IsNullOrWhiteSpace(address) ? "В кошельке пока нет адреса" : address;
         _receiveCopyButton.Enabled = !string.IsNullOrWhiteSpace(address);
+        _saveReceiveQrButton.Enabled = !string.IsNullOrWhiteSpace(address);
 
         Image? oldImage = _receiveQrCode.Image;
         _receiveQrCode.Image = null;
         oldImage?.Dispose();
-        if (string.IsNullOrWhiteSpace(address)) return;
+        if (string.IsNullOrWhiteSpace(address))
+        {
+            _receiveQrCode.Visible = false;
+            _receiveQrCaption.Visible = false;
+            return;
+        }
 
         try
         {
@@ -2713,9 +2939,15 @@ internal sealed class MainForm : Form
             using var stream = new MemoryStream(png);
             using Image image = Image.FromStream(stream);
             _receiveQrCode.Image = new Bitmap(image);
+            _receiveQrCode.Visible = true;
+            _receiveQrCaption.Visible = true;
+            _saveReceiveQrButton.Enabled = true;
         }
         catch (Exception ex)
         {
+            _receiveQrCode.Visible = false;
+            _receiveQrCaption.Visible = false;
+            _saveReceiveQrButton.Enabled = false;
             WriteNodeLog("Не удалось подготовить QR-код адреса: " + ex.Message);
         }
     }
@@ -2973,6 +3205,76 @@ internal sealed class MainForm : Form
         }
     }
 
+    private async Task<FeeEstimate> CalculateSendFeeEstimateAsync()
+    {
+        if (!IsNodeRunning() || _rpc is null)
+            throw new InvalidOperationException("Сначала запустите ноду, чтобы рассчитать комиссию.");
+
+        JsonElement feeInfo = await _rpc.CallAsync("getfeerate");
+        decimal minimum = ReadDecimal(feeInfo, "min_tx_fee_gc");
+        decimal ratePerKbGc = ReadDecimal(feeInfo, "recommended_fee_rate_per_kb_gc");
+        if (ratePerKbGc <= 0 && feeInfo.TryGetProperty("recommended_fee_rate_per_kb", out JsonElement angleRate) &&
+            angleRate.TryGetDecimal(out decimal rateAngles))
+            ratePerKbGc = rateAngles / 100_000_000m;
+        if (minimum <= 0 && feeInfo.TryGetProperty("min_tx_fee", out JsonElement minimumAngles) &&
+            minimumAngles.TryGetDecimal(out decimal minimumAngleValue))
+            minimum = minimumAngleValue / 100_000_000m;
+        if (minimum <= 0)
+            throw new InvalidOperationException("Нода не сообщила минимальную комиссию.");
+
+        // GeoCoin's wallet estimate uses 40 base + 1,800 per input + 60 per output.
+        // Assume one input and recipient plus change outputs, matching a typical send.
+        const int typicalSerializedBytes = 1960;
+        decimal estimated = Math.Max(minimum, ratePerKbGc * typicalSerializedBytes / 1000m);
+        estimated = decimal.Ceiling(estimated * 100_000_000m) / 100_000_000m;
+        return new FeeEstimate(estimated, minimum, Math.Max(0, ratePerKbGc), typicalSerializedBytes);
+    }
+
+    private string FormatSendFeeAmount(decimal amount)
+        => _englishUi ? amount.ToString("0.########", CultureInfo.InvariantCulture) : FormatGcAmount(amount);
+
+    private string FormatSendFeeEstimate(FeeEstimate estimate)
+    {
+        string approximate = FormatSendFeeAmount(estimate.ApproximateGc);
+        string minimum = FormatSendFeeAmount(estimate.MinimumGc);
+        string rate = FormatSendFeeAmount(estimate.RateGcPerKb);
+        if (_englishUi)
+        {
+            _sendFeeHint.Text = $"Minimum {minimum} GC · rate {rate} GC/kB · typical transaction about {estimate.AssumedBytes} bytes.";
+            return $"Estimated fee: about {approximate} GC";
+        }
+        _sendFeeHint.Text = $"Минимум {minimum} GC · ставка {rate} GC/кБ · обычная транзакция около {estimate.AssumedBytes} байт.";
+        return $"Ориентировочная комиссия: {approximate} GC";
+    }
+
+    private async Task RefreshSendFeeEstimateAsync()
+    {
+        if (_refreshingSendFee || _currentPage != "send" || !IsNodeRunning() || _sendFeeEstimate.IsDisposed) return;
+        _refreshingSendFee = true;
+        try
+        {
+            FeeEstimate estimate = await CalculateSendFeeEstimateAsync();
+            if (_currentPage != "send" || _sendFeeEstimate.IsDisposed) return;
+            _sendFeeEstimate.Text = FormatSendFeeEstimate(estimate);
+            ApplyUiLanguage(_sendFeeEstimate);
+            ApplyUiLanguage(_sendFeeHint);
+        }
+        catch (Exception ex)
+        {
+            if (_currentPage == "send" && !_sendFeeEstimate.IsDisposed)
+            {
+                _sendFeeEstimate.Text = "Не удалось получить оценку комиссии.";
+                _sendFeeHint.Text = ex.Message;
+                ApplyUiLanguage(_sendFeeEstimate);
+                ApplyUiLanguage(_sendFeeHint);
+            }
+        }
+        finally
+        {
+            _refreshingSendFee = false;
+        }
+    }
+
     private async Task SendAsync()
     {
         if (!IsNodeRunning() || _rpc is null) return;
@@ -3004,9 +3306,33 @@ internal sealed class MainForm : Form
             return;
         }
 
-        string review = $"Отправить {amount.ToString("0.########", CultureInfo.InvariantCulture)} GC?\n\n" +
-                        $"Получатель:\n{address}\n\nКомиссия рассчитается автоматически. Отменить отправку после подтверждения нельзя.";
-        if (MessageBox.Show(this, review, "Проверьте перевод", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
+        FeeEstimate feeEstimate;
+        try
+        {
+            feeEstimate = await CalculateSendFeeEstimateAsync();
+            _sendFeeEstimate.Text = FormatSendFeeEstimate(feeEstimate);
+            ApplyUiLanguage(_sendFeeEstimate);
+            ApplyUiLanguage(_sendFeeHint);
+        }
+        catch (Exception ex)
+        {
+            _sendMessage.Text = "Не удалось рассчитать комиссию: " + ex.Message;
+            _sendMessage.ForeColor = Error;
+            return;
+        }
+
+        string amountForReview = amount.ToString("0.########", _englishUi ? CultureInfo.InvariantCulture : CultureInfo.CurrentCulture);
+        string review = _englishUi
+            ? $"Send {amountForReview} GC?\n\nRecipient:\n{address}\n\n" +
+              $"Fee: about {FormatSendFeeAmount(feeEstimate.ApproximateGc)} GC\n" +
+              $"Minimum: {FormatSendFeeAmount(feeEstimate.MinimumGc)} GC. This estimate assumes a typical {feeEstimate.AssumedBytes}-byte transaction; the final fee depends on the selected inputs and may be higher.\n\n" +
+              "A confirmed transfer cannot be canceled."
+            : $"Отправить {amountForReview} GC?\n\nПолучатель:\n{address}\n\n" +
+              $"Комиссия: примерно {FormatSendFeeAmount(feeEstimate.ApproximateGc)} GC\n" +
+              $"Минимум: {FormatSendFeeAmount(feeEstimate.MinimumGc)} GC. Расчёт сделан для обычной транзакции около {feeEstimate.AssumedBytes} байт; точная сумма зависит от выбранных входов и может быть выше.\n\n" +
+              "После подтверждения перевод нельзя отменить.";
+        string reviewTitle = _englishUi ? "Review transfer" : "Проверьте перевод";
+        if (MessageBox.Show(this, review, reviewTitle, MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
             return;
 
         _sendButton.Enabled = false;
@@ -3014,14 +3340,8 @@ internal sealed class MainForm : Form
         _sendMessage.ForeColor = Muted;
         try
         {
-            JsonElement feeInfo = await _rpc.CallAsync("getfeerate");
-            if (!feeInfo.TryGetProperty("min_tx_fee_gc", out JsonElement feeElement) ||
-                !feeElement.TryGetDecimal(out decimal minimumFee) || minimumFee <= 0)
-                throw new InvalidOperationException("Нода не сообщила минимальную комиссию. Перевод не отправлен.");
-
-            // v0.1.3 takes positional arguments: address, amount, optional fee, password.
-            // Passing the minimum fee lets the node calculate its current required fee.
-            var parameters = new object[] { address, amount, minimumFee, password };
+            // The node recalculates the fee from selected inputs and applies at least this estimate.
+            var parameters = new object[] { address, amount, feeEstimate.ApproximateGc, password };
             JsonElement result = await _rpc.CallAsync("sendtoaddress", parameters);
             string txid = result.ValueKind == JsonValueKind.String ? result.GetString() ?? "" : result.ToString();
             _sendMessage.Text = "Перевод принят нодой. Номер: " + txid;
@@ -3051,7 +3371,7 @@ internal sealed class MainForm : Form
                 _nodeStatus = "Нода завершилась";
                 CleanupNodeSession();
                 UpdateStatus();
-                if (_currentPage == "overview") BuildPage();
+                if (_currentPage is "overview" or "send" or "receive" or "transactions" or "wallet") BuildPage();
             }
             if (_currentPage == "node") UpdateNodePage();
             return;
@@ -3511,6 +3831,8 @@ internal sealed class MainForm : Form
             ("Синхронизировано ", "Synced "), ("Подключаюсь к ", "Connecting to "),
             ("Ключ добавлен, но история восстановлена не полностью (", "Key imported, but address history is incomplete ("),
             ("Зрелые монеты: ", "Mature coins: "), ("Незрелые монеты: ", "Immature coins: "),
+            ("Ориентировочная комиссия: ", "Estimated fee: "), ("Не удалось рассчитать комиссию: ", "Could not calculate the fee: "),
+            ("Не удалось импортировать QR-код: ", "Could not import QR code: "), ("Не удалось сохранить QR-код: ", "Could not save QR code: "),
             ("Адрес награды: ", "Reward address: "), ("ID транзакции: ", "Transaction ID: "),
             ("Перевод принят нодой. Номер: ", "Transfer accepted by the node. ID: "),
             ("Не удалось загрузить адреса кошелька: ", "Could not load wallet addresses: "),

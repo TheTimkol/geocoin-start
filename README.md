@@ -17,8 +17,9 @@ Run the setup file and choose **Install**. An internet connection is required: t
 - CPU and GPU mining controls on one page. Start either or both at once; the app shows a separate hashrate for each. GPU rewards use an existing address from the current wallet.
 - Mined-block count for the current day, current or most recent mining session, and wallet lifetime, plus mature and immature coin balances. Session and lifetime counts are retained across app restarts.
 - Transaction history with dates, operation type, amount, fee, confirmation state, address, and a copyable transaction ID.
-- Sending GeoCoin with an automatically calculated fee and a confirmation screen.
-- Receiving GeoCoin using any existing wallet address or a newly created address, with copy and QR-code support. The QR code contains the raw GeoCoin address.
+- Sending GeoCoin with a network fee estimate, an image-based QR import for recipient address (and amount when present), and a confirmation screen. The node recalculates the final fee from the selected inputs.
+- Receiving GeoCoin using any existing wallet address or a newly created address, with copy and QR-code PNG export. The QR code contains the raw GeoCoin address.
+- Clear empty states on receive, history, and wallet pages when the node or wallet is unavailable, with a link back to the overview.
 - Password-protected wallet creation, full-wallet `.dat` backup export, and import from an existing GeoCoin wallet file or backup. Import asks for the wallet file's password when it is protected and keeps the source file unchanged.
 - Import and export of a 64-character hexadecimal private key for one address. GeoCoin does not use a mnemonic seed phrase; use the `.dat` backup to save the whole wallet.
 - A private-key `.txt` export is unencrypted and must be kept secret.

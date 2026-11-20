@@ -12,6 +12,9 @@ Russian/English installer and simplified GeoCoin wallet for Windows 10/11 x64. T
 - One mining page with independent CPU and GPU controls. Both can run together, with separate hashrates; GPU rewards go to an existing address in the current wallet.
 - Mined-block counts for today, the current or most recent session, and the wallet lifetime, plus mature and immature wallet balances. Session and lifetime counts persist across restarts.
 - Transaction history showing date, type, amount, fee, confirmations, address, and copyable transaction ID.
+- Send page shows a current network fee estimate, can import a recipient address (and optional amount) from a QR image, and explains that the node recalculates the final fee from selected inputs.
+- Receive page can export the selected address QR code as a PNG image. QR imports are decoded from image files.
+- Receive, history, and wallet pages explain what is missing and link back to the overview when the node or wallet is unavailable.
 - Password-protected wallets with full-wallet `.dat` backup export and import from existing GeoCoin wallet files or backups. Import asks for the file password when it is protected and does not change the source file.
 - Receive page can choose an existing wallet address or create a new one, and displays a copyable address QR code containing the raw GeoCoin address.
 - Import/export of a 64-character hexadecimal private key for an individual address. GeoCoin has no mnemonic seed phrase; use the `.dat` wallet backup for a full copy.
