@@ -6,9 +6,12 @@ Russian-language installer and simplified GeoCoin wallet for Windows 10/11 x64.
 
 - A single self-contained `GeoCoin-Start-Setup.exe`; no separate .NET runtime or administrator rights are required.
 - The official GeoCoin v0.1.3 Windows package is downloaded from the author's release and verified with SHA-256 before installation.
-- Four sections: Overview, Mining, Send, and Receive.
+- Six sections: Overview, Mining, Send, Receive, Transactions, and Wallet.
 - One mining page with independent CPU and GPU controls. Both can run together, with separate hashrates; GPU rewards go to an existing address in the current wallet.
-- Password-protected wallets with encrypted backup export and import from existing GeoCoin wallet files or backups. Import asks for the file password and does not change the source file.
+- Transaction history showing date, type, amount, fee, confirmations, address, and copyable transaction ID.
+- Password-protected wallets with full-wallet `.dat` backup export and import from existing GeoCoin wallet files or backups. Import asks for the file password when it is protected and does not change the source file.
+- Import/export of a 64-character hexadecimal private key for an individual address. GeoCoin has no mnemonic seed phrase; use the `.dat` wallet backup for a full copy.
+- Private-key `.txt` exports are unencrypted and must be kept secret.
 - A Windows uninstaller that keeps wallet and node data by default.
 
 Running CPU and GPU mining together can put a heavy load on the computer. GPU mining requires a supported graphics card and its CUDA, HIP, or OpenCL driver. GeoCoin-Start does not install drivers.

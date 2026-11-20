@@ -12,9 +12,12 @@ Run the setup file and choose **Install**. An internet connection is required: t
 
 - Overview of the local node, synchronization, and wallet balance.
 - CPU and GPU mining controls on one page. Start either or both at once; the app shows a separate hashrate for each. GPU rewards use an existing address from the current wallet.
+- Transaction history with dates, operation type, amount, fee, confirmation state, address, and a copyable transaction ID.
 - Sending GeoCoin with an automatically calculated fee and a confirmation screen.
 - Receiving GeoCoin with a new address and a copy button.
-- Password-protected wallet creation, encrypted backup export, and import from an existing GeoCoin wallet file or encrypted backup. Import asks for the wallet file's password and keeps the original file unchanged.
+- Password-protected wallet creation, full-wallet `.dat` backup export, and import from an existing GeoCoin wallet file or backup. Import asks for the wallet file's password when it is protected and keeps the source file unchanged.
+- Import and export of a 64-character hexadecimal private key for one address. GeoCoin does not use a mnemonic seed phrase; use the `.dat` backup to save the whole wallet.
+- A private-key `.txt` export is unencrypted and must be kept secret.
 - A Windows uninstaller in the Start menu and Installed Apps. Wallet and node data are kept by default; removal of those data is an explicit option.
 
 Mining starts only after the user confirms. Running CPU and GPU mining together can put a heavy load on the computer. GPU mining requires a supported graphics card and working CUDA, HIP, or OpenCL drivers. The app does not install graphics drivers.

@@ -33,12 +33,23 @@ internal sealed class MainForm : Form
     private readonly Label _gpuMiningState = new();
     private readonly Label _miningHashrate = new();
     private readonly Label _gpuRewardAddress = new();
+    private readonly Label _transactionStatus = new();
+    private readonly Label _transactionDetails = new();
+    private readonly Label _walletKeyStatus = new();
     private readonly NumericUpDown _threadCount = new();
     private readonly ComboBox _gpuDeviceCombo = new();
+    private readonly ComboBox _walletAddressCombo = new();
     private readonly Button _refreshGpuButton = new();
+    private readonly Button _refreshTransactionsButton = new();
+    private readonly Button _copyTransactionIdButton = new();
+    private readonly Button _walletFileExportButton = new();
+    private readonly Button _walletKeyExportButton = new();
+    private readonly Button _walletKeyImportButton = new();
+    private readonly Button _refreshWalletAddressesButton = new();
     private readonly TextBox _sendAddress = new();
     private readonly TextBox _sendAmount = new();
     private readonly TextBox _sendPassword = new();
+    private readonly TextBox _privateKeyInput = new();
     private readonly Label _sendMessage = new();
     private readonly Label _receiveAddress = new();
     private readonly Label _receiveMessage = new();
@@ -50,11 +61,12 @@ internal sealed class MainForm : Form
     private readonly Button _gpuMineButton = new();
     private readonly Button _sendButton = new();
     private readonly Button _receiveButton = new();
-    private readonly Button[] _navigation = new Button[4];
+    private readonly Button[] _navigation = new Button[6];
     private readonly System.Windows.Forms.Timer _refreshTimer = new() { Interval = 4000 };
 
     private GeoCoinRpcClient? _rpc;
     private GeoCoinRpcClient? _minerRpc;
+    private DataGridView? _transactionGrid;
     private Process? _nodeProcess;
     private Process? _gpuMinerProcess;
     private StreamWriter? _logWriter;
@@ -73,10 +85,14 @@ internal sealed class MainForm : Form
     private bool _gpuMiningActive;
     private bool _checkingGpuDevices;
     private bool _gpuDevicesScanned;
+    private bool _loadingTransactions;
+    private bool _loadingWalletAddresses;
     private double _cpuHashrateValue;
     private string _gpuHashrateText = "Скорость: —";
     private string _gpuStatusText = "GPU-майнинг остановлен";
     private readonly List<GpuDevice> _gpuDevices = new();
+    private readonly List<string> _walletAddresses = new();
+    private string? _selectedTransactionId;
     private bool _refreshing;
     private bool _allowClose;
     private bool _closePromptOpen;
@@ -124,8 +140,19 @@ internal sealed class MainForm : Form
                 _gpuMineButton.Enabled = IsNodeRunning() && File.Exists(AppPaths.WalletPath) &&
                     (_gpuMiningActive || _gpuDeviceCombo.SelectedItem is GpuDevice);
         };
+        _walletAddressCombo.SelectedIndexChanged += (_, _) =>
+        {
+            if (_walletKeyExportButton.IsHandleCreated)
+                _walletKeyExportButton.Enabled = IsNodeRunning() && _walletAddressCombo.SelectedItem is string;
+        };
         _sendButton.Click += async (_, _) => await SendAsync();
         _receiveButton.Click += async (_, _) => await CreateReceiveAddressAsync();
+        _refreshTransactionsButton.Click += async (_, _) => await RefreshTransactionsAsync();
+        _copyTransactionIdButton.Click += (_, _) => CopySelectedTransactionId();
+        _walletFileExportButton.Click += async (_, _) => await BackupWalletAsync();
+        _walletKeyExportButton.Click += async (_, _) => await ExportPrivateKeyAsync();
+        _walletKeyImportButton.Click += async (_, _) => await ImportPrivateKeyAsync();
+        _refreshWalletAddressesButton.Click += async (_, _) => await RefreshWalletAddressesAsync();
         _threadCount.ValueChanged += (_, _) => _selectedThreads = (int)_threadCount.Value;
         _refreshTimer.Tick += async (_, _) => await RefreshStateAsync();
         _refreshTimer.Start();
@@ -190,8 +217,8 @@ internal sealed class MainForm : Form
             ForeColor = Color.FromArgb(144, 161, 145)
         });
 
-        string[] names = { "Обзор", "Майнинг", "Отправить", "Получить" };
-        string[] pages = { "overview", "mining", "send", "receive" };
+        string[] names = { "Обзор", "Майнинг", "Отправить", "Получить", "История", "Кошелёк" };
+        string[] pages = { "overview", "mining", "send", "receive", "transactions", "wallet" };
         for (int i = 0; i < names.Length; i++)
         {
             int index = i;
@@ -330,16 +357,19 @@ internal sealed class MainForm : Form
 
     private void SetPage(string page)
     {
+        if (_currentPage == "wallet" && page != "wallet") _privateKeyInput.Clear();
         _currentPage = page;
         string[] titles = page switch
         {
             "mining" => new[] { "Майнинг", "Майнинг", "Майнинг", "Майнинг" },
             "send" => new[] { "Отправить монеты", "Отправить монеты", "Отправить монеты", "Отправить монеты" },
             "receive" => new[] { "Получить монеты", "Получить монеты", "Получить монеты", "Получить монеты" },
+            "transactions" => new[] { "История транзакций", "История транзакций", "История транзакций", "История транзакций" },
+            "wallet" => new[] { "Управление кошельком", "Управление кошельком", "Управление кошельком", "Управление кошельком" },
             _ => new[] { "Обзор", "Обзор", "Обзор", "Обзор" }
         };
         _pageTitle.Text = titles[0];
-        string[] pages = { "overview", "mining", "send", "receive" };
+        string[] pages = { "overview", "mining", "send", "receive", "transactions", "wallet" };
         for (int i = 0; i < _navigation.Length; i++)
         {
             bool selected = pages[i] == page;
@@ -349,17 +379,24 @@ internal sealed class MainForm : Form
         BuildPage();
         if (page == "mining" && !_gpuDevicesScanned && !_checkingGpuDevices && File.Exists(AppPaths.GpuMinerPath))
             _ = RefreshGpuDevicesAsync();
+        if (page == "transactions" && IsNodeRunning() && File.Exists(AppPaths.WalletPath))
+            _ = RefreshTransactionsAsync();
+        if (page == "wallet" && IsNodeRunning() && File.Exists(AppPaths.WalletPath))
+            _ = RefreshWalletAddressesAsync();
     }
 
     private void BuildPage()
     {
         _pagePanel.SuspendLayout();
         _pagePanel.Controls.Clear();
+        _transactionGrid = null;
         switch (_currentPage)
         {
             case "mining": BuildMiningPage(); break;
             case "send": BuildSendPage(); break;
             case "receive": BuildReceivePage(); break;
+            case "transactions": BuildTransactionsPage(); break;
+            case "wallet": BuildWalletPage(); break;
             default: BuildOverviewPage(); break;
         }
         _pagePanel.ResumeLayout();
@@ -405,7 +442,7 @@ internal sealed class MainForm : Form
         _pagePanel.Controls.Add(_nodeButton);
 
         bool hasWallet = File.Exists(AppPaths.WalletPath);
-        _walletButton.Text = hasWallet ? "Сохранить копию" : "Создать кошелёк";
+        _walletButton.Text = hasWallet ? "Экспортировать кошелёк (.dat)" : "Создать кошелёк";
         StyleSecondaryButton(_walletButton, new Point(232, 416), new Size(230, 42));
         _walletButton.Enabled = IsNodeRunning();
         _pagePanel.Controls.Add(_walletButton);
@@ -586,6 +623,142 @@ internal sealed class MainForm : Form
 
         if (!IsNodeRunning()) AddParagraph("Сначала запустите ноду на странице «Обзор».", 24, 394, cardWidth - 48, 32);
         else if (!File.Exists(AppPaths.WalletPath)) AddParagraph("Сначала создайте кошелёк на странице «Обзор».", 24, 394, cardWidth - 48, 32);
+    }
+
+    private void BuildTransactionsPage()
+    {
+        int cardWidth = PageCardWidth(700);
+        AddParagraph("История входящих переводов, отправок и наград за майнинг.", 22, 12, cardWidth - 130, 38);
+        _refreshTransactionsButton.Text = "Обновить";
+        StyleSecondaryButton(_refreshTransactionsButton, new Point(cardWidth - 112, 8), new Size(88, 34));
+        _refreshTransactionsButton.Enabled = IsNodeRunning() && File.Exists(AppPaths.WalletPath) && !_loadingTransactions;
+        _pagePanel.Controls.Add(_refreshTransactionsButton);
+
+        Panel card = AddCard(22, 58, cardWidth, 550);
+        _transactionGrid = new DataGridView
+        {
+            Location = UiPoint(14, 14),
+            Size = UiSize(cardWidth - 30, 410),
+            ReadOnly = true,
+            AllowUserToAddRows = false,
+            AllowUserToDeleteRows = false,
+            AllowUserToResizeRows = false,
+            RowHeadersVisible = false,
+            MultiSelect = false,
+            SelectionMode = DataGridViewSelectionMode.FullRowSelect,
+            AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill,
+            BackgroundColor = Color.White,
+            BorderStyle = BorderStyle.None,
+            GridColor = Color.FromArgb(226, 226, 220),
+            EnableHeadersVisualStyles = false,
+            Font = new Font("Segoe UI", 9),
+            RowTemplate = { Height = 30 }
+        };
+        _transactionGrid.ColumnHeadersDefaultCellStyle.BackColor = Color.FromArgb(241, 241, 235);
+        _transactionGrid.ColumnHeadersDefaultCellStyle.ForeColor = Ink;
+        _transactionGrid.ColumnHeadersDefaultCellStyle.Font = new Font("Segoe UI Semibold", 9, FontStyle.Bold);
+        _transactionGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "date", HeaderText = "Дата", FillWeight = 125 });
+        _transactionGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "type", HeaderText = "Операция", FillWeight = 92 });
+        _transactionGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "amount", HeaderText = "Сумма", FillWeight = 105 });
+        _transactionGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "fee", HeaderText = "Комиссия", FillWeight = 78 });
+        _transactionGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "status", HeaderText = "Состояние", FillWeight = 112 });
+        _transactionGrid.Columns.Add(new DataGridViewTextBoxColumn { Name = "address", HeaderText = "Адрес", FillWeight = 178 });
+        _transactionGrid.SelectionChanged += (_, _) =>
+        {
+            _selectedTransactionId = _transactionGrid?.CurrentRow?.Tag as string;
+            _transactionDetails.Text = string.IsNullOrWhiteSpace(_selectedTransactionId)
+                ? "Выберите запись, чтобы посмотреть номер транзакции."
+                : "ID транзакции: " + _selectedTransactionId;
+            _copyTransactionIdButton.Enabled = !string.IsNullOrWhiteSpace(_selectedTransactionId);
+        };
+        card.Controls.Add(_transactionGrid);
+
+        _transactionDetails.Text = "Выберите запись, чтобы посмотреть номер транзакции.";
+        _transactionDetails.Location = UiPoint(18, 438);
+        _transactionDetails.Size = UiSize(cardWidth - 170, 42);
+        _transactionDetails.ForeColor = Muted;
+        _transactionDetails.AutoEllipsis = true;
+        card.Controls.Add(_transactionDetails);
+
+        _copyTransactionIdButton.Text = "Копировать ID";
+        StyleSecondaryButton(_copyTransactionIdButton, new Point(cardWidth - 154, 438), new Size(132, 36));
+        _copyTransactionIdButton.Enabled = false;
+        card.Controls.Add(_copyTransactionIdButton);
+
+        _transactionStatus.Text = !IsNodeRunning()
+            ? "Сначала запустите ноду на странице «Обзор»."
+            : !File.Exists(AppPaths.WalletPath)
+                ? "Создайте или импортируйте кошелёк, чтобы увидеть историю."
+                : "Запрашиваю историю кошелька…";
+        _transactionStatus.Location = UiPoint(18, 496);
+        _transactionStatus.Size = UiSize(cardWidth - 36, 28);
+        _transactionStatus.ForeColor = Muted;
+        _transactionStatus.AutoEllipsis = true;
+        card.Controls.Add(_transactionStatus);
+    }
+
+    private void BuildWalletPage()
+    {
+        int cardWidth = PageCardWidth(700);
+        int contentWidth = cardWidth - 48;
+        AddParagraph("Резервная копия сохраняет весь кошелёк. Приватный ключ относится только к одному адресу.", 22, 12, cardWidth, 42);
+        Panel card = AddCard(22, 66, cardWidth, 520);
+
+        AddLabel(card, "Полная копия кошелька", 24, 18, contentWidth, 24, Ink, 13, bold: true);
+        AddLabel(card, "Файл .dat включает весь текущий кошелёк и подходит для его восстановления.",
+            24, 48, contentWidth, 38, Muted, 9.5f);
+        _walletFileExportButton.Text = "Экспортировать весь кошелёк (.dat)";
+        StylePrimaryButton(_walletFileExportButton, new Point(24, 88), new Size(268, 40));
+        _walletFileExportButton.Enabled = IsNodeRunning() && File.Exists(AppPaths.WalletPath);
+        card.Controls.Add(_walletFileExportButton);
+
+        var divider = new Panel
+        {
+            Location = UiPoint(24, 145),
+            Size = UiSize(contentWidth, 1),
+            BackColor = Color.FromArgb(220, 220, 214)
+        };
+        card.Controls.Add(divider);
+
+        AddLabel(card, "Приватный ключ одного адреса", 24, 162, contentWidth, 24, Ink, 13, bold: true);
+        AddLabel(card,
+            "В GeoCoin нет мнемонической фразы. Приватный ключ из 64 hex-символов открывает один адрес.",
+            24, 191, contentWidth, 44, Muted, 9.5f);
+
+        AddLabel(card, "Адрес для экспорта ключа", 24, 240, contentWidth, 20, Ink, 10, bold: true);
+        _walletAddressCombo.DropDownStyle = ComboBoxStyle.DropDownList;
+        _walletAddressCombo.Location = UiPoint(24, 264);
+        _walletAddressCombo.Size = UiSize(Math.Max(260, cardWidth - 160), 34);
+        _walletAddressCombo.Font = new Font("Segoe UI", 9.5f);
+        _walletAddressCombo.Enabled = !_loadingWalletAddresses;
+        card.Controls.Add(_walletAddressCombo);
+
+        _refreshWalletAddressesButton.Text = "Обновить";
+        StyleSecondaryButton(_refreshWalletAddressesButton, new Point(cardWidth - 112, 262), new Size(88, 36));
+        _refreshWalletAddressesButton.Enabled = IsNodeRunning() && File.Exists(AppPaths.WalletPath) && !_loadingWalletAddresses;
+        card.Controls.Add(_refreshWalletAddressesButton);
+
+        _walletKeyExportButton.Text = "Сохранить ключ выбранного адреса";
+        StyleSecondaryButton(_walletKeyExportButton, new Point(24, 306), new Size(268, 38));
+        _walletKeyExportButton.Enabled = IsNodeRunning() && _walletAddressCombo.SelectedItem is string;
+        card.Controls.Add(_walletKeyExportButton);
+
+        AddLabel(card, "Импорт ключа в текущий кошелёк", 24, 358, contentWidth, 20, Ink, 10, bold: true);
+        StyleTextBox(_privateKeyInput, new Point(24, 382), new Size(Math.Max(230, cardWidth - 300), 36));
+        _privateKeyInput.PlaceholderText = "64 шестнадцатеричных символа";
+        _privateKeyInput.UseSystemPasswordChar = true;
+        card.Controls.Add(_privateKeyInput);
+
+        _walletKeyImportButton.Text = "Импортировать ключ";
+        StylePrimaryButton(_walletKeyImportButton, new Point(cardWidth - 240, 380), new Size(216, 40));
+        _walletKeyImportButton.Enabled = IsNodeRunning() && File.Exists(AppPaths.WalletPath);
+        card.Controls.Add(_walletKeyImportButton);
+
+        _walletKeyStatus.Text = "Ключи — секретные данные. Не отправляйте их другим людям и не храните в общедоступных файлах.";
+        _walletKeyStatus.Location = UiPoint(24, 440);
+        _walletKeyStatus.Size = UiSize(contentWidth, 48);
+        _walletKeyStatus.ForeColor = Muted;
+        card.Controls.Add(_walletKeyStatus);
     }
 
     private async Task StartNodeAsync(bool offerWalletCreation = true, string? suppliedWalletPassword = null)
@@ -801,7 +974,7 @@ internal sealed class MainForm : Form
         try
         {
             await _rpc.CallAsync("backupwallet", new[] { dialog.FileName });
-            MessageBox.Show(this, "Зашифрованная резервная копия сохранена. Храните её отдельно от компьютера вместе с паролем кошелька.",
+            MessageBox.Show(this, "Копия кошелька сохранена. Храните её отдельно от компьютера; для защищённого файла также сохраните пароль.",
                 "Копия готова", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
         catch (Exception ex)
@@ -1165,10 +1338,17 @@ internal sealed class MainForm : Form
             {
                 string rate = "";
                 if (root.TryGetProperty("hashrate", out JsonElement rateValue))
-                    rate = rateValue.ValueKind == JsonValueKind.String ? rateValue.GetString() ?? "" : rateValue.ToString();
+                {
+                    string rawRate = rateValue.ValueKind == JsonValueKind.String ? rateValue.GetString() ?? "" : rateValue.ToString();
+                    if (rateValue.ValueKind == JsonValueKind.Number && rateValue.TryGetDouble(out double numericRate))
+                        rate = FormatHashrate(numericRate);
+                    else if (double.TryParse(rawRate, NumberStyles.Float, CultureInfo.InvariantCulture, out numericRate))
+                        rate = FormatHashrate(numericRate);
+                    else rate = rawRate;
+                }
                 string state = root.TryGetProperty("message", out JsonElement stateValue) ? stateValue.GetString() ?? "" : "";
                 _gpuStatusText = string.IsNullOrWhiteSpace(state) ? "GPU-майнинг работает" : state;
-                _gpuHashrateText = string.IsNullOrWhiteSpace(rate) ? "Скорость GPU: —" : $"Скорость GPU: {rate} хеш/с";
+                _gpuHashrateText = string.IsNullOrWhiteSpace(rate) ? "Скорость GPU: —" : $"Скорость GPU: {rate}";
                 if (!IsDisposed && IsHandleCreated) BeginInvoke((Action)(() =>
                 {
                     if (!IsDisposed && _currentPage == "mining")
@@ -1244,6 +1424,258 @@ internal sealed class MainForm : Form
         }
         Clipboard.SetText(_lastAddress);
         _receiveMessage.Text = "Адрес скопирован. Теперь его можно отправить отправителю.";
+    }
+
+    private async Task RefreshTransactionsAsync()
+    {
+        if (_loadingTransactions || _rpc is null || _currentPage != "transactions" || _transactionGrid is null) return;
+        DataGridView grid = _transactionGrid;
+        _loadingTransactions = true;
+        _refreshTransactionsButton.Enabled = false;
+        _transactionStatus.Text = "Обновляю историю кошелька…";
+        try
+        {
+            JsonElement result = await _rpc.CallAsync("listtransactions", new object[] { "*", 100, 0, true });
+            if (!ReferenceEquals(grid, _transactionGrid) || _currentPage != "transactions") return;
+            if (result.ValueKind != JsonValueKind.Array)
+                throw new InvalidOperationException("Нода вернула историю в неизвестном формате.");
+
+            grid.Rows.Clear();
+            foreach (JsonElement entry in result.EnumerateArray())
+            {
+                string txid = ReadString(entry, "txid");
+                string category = ReadString(entry, "category").ToLowerInvariant();
+                string address = ReadString(entry, "address");
+                string operation = category switch
+                {
+                    "receive" => "Получение",
+                    "send" => "Отправка",
+                    "generate" => "Майнинг",
+                    "immature" => "Награда",
+                    "orphan" => "Отменена",
+                    _ => string.IsNullOrWhiteSpace(category) ? "Операция" : category
+                };
+                decimal amount = ReadDecimal(entry, "amount");
+                decimal fee = ReadDecimal(entry, "fee");
+                long confirmations = ReadInt64(entry, "confirmations");
+                string status = category switch
+                {
+                    "immature" => "Ожидает зрелости",
+                    "orphan" => "Отменена",
+                    _ when confirmations < 0 => "Конфликт",
+                    _ when confirmations == 0 => "Ожидает",
+                    _ => $"{confirmations:N0} подтв."
+                };
+                string date = FormatTransactionTime(entry);
+                int rowIndex = grid.Rows.Add(date, operation, FormatGcAmount(amount, includePositiveSign: true),
+                    fee == 0 ? "—" : Math.Abs(fee).ToString("0.########", CultureInfo.CurrentCulture) + " GC", status, address);
+                DataGridViewRow row = grid.Rows[rowIndex];
+                row.Tag = txid;
+                row.Cells[5].ToolTipText = address;
+                row.Cells[2].Style.ForeColor = amount < 0 ? Color.FromArgb(161, 70, 53) : Color.FromArgb(53, 119, 74);
+            }
+            if (grid.Rows.Count > 0)
+            {
+                grid.ClearSelection();
+                grid.CurrentCell = grid.Rows[0].Cells[0];
+                grid.Rows[0].Selected = true;
+                _selectedTransactionId = grid.Rows[0].Tag as string;
+                _transactionDetails.Text = string.IsNullOrWhiteSpace(_selectedTransactionId)
+                    ? "Выберите запись, чтобы посмотреть номер транзакции."
+                    : "ID транзакции: " + _selectedTransactionId;
+                _copyTransactionIdButton.Enabled = !string.IsNullOrWhiteSpace(_selectedTransactionId);
+            }
+            else
+            {
+                _selectedTransactionId = null;
+                _transactionDetails.Text = "Выберите запись, чтобы посмотреть номер транзакции.";
+                _copyTransactionIdButton.Enabled = false;
+            }
+            _transactionStatus.Text = grid.Rows.Count == 0
+                ? "В истории пока нет операций. После синхронизации обновите список."
+                : $"Показаны последние {grid.Rows.Count} записей. Разные выходы одной транзакции могут отображаться отдельно.";
+        }
+        catch (Exception ex)
+        {
+            if (ReferenceEquals(grid, _transactionGrid))
+                _transactionStatus.Text = "Не удалось загрузить историю: " + ex.Message;
+        }
+        finally
+        {
+            _loadingTransactions = false;
+            if (_currentPage == "transactions" && !IsDisposed)
+                _refreshTransactionsButton.Enabled = IsNodeRunning() && File.Exists(AppPaths.WalletPath);
+        }
+    }
+
+    private void CopySelectedTransactionId()
+    {
+        if (string.IsNullOrWhiteSpace(_selectedTransactionId)) return;
+        try
+        {
+            Clipboard.SetText(_selectedTransactionId);
+            _transactionStatus.Text = "ID транзакции скопирован.";
+        }
+        catch (Exception ex)
+        {
+            _transactionStatus.Text = "Не удалось скопировать ID: " + ex.Message;
+        }
+    }
+
+    private async Task RefreshWalletAddressesAsync()
+    {
+        if (_loadingWalletAddresses || _rpc is null || _currentPage != "wallet" || !File.Exists(AppPaths.WalletPath)) return;
+        _loadingWalletAddresses = true;
+        _refreshWalletAddressesButton.Enabled = false;
+        _walletAddressCombo.Enabled = false;
+        _walletKeyStatus.Text = "Загружаю адреса текущего кошелька…";
+        try
+        {
+            string? previous = _walletAddressCombo.SelectedItem as string;
+            List<string> addresses = await GetWalletAddressesAsync();
+            _walletAddresses.Clear();
+            _walletAddresses.AddRange(addresses);
+            _walletAddressCombo.BeginUpdate();
+            _walletAddressCombo.Items.Clear();
+            foreach (string address in addresses) _walletAddressCombo.Items.Add(address);
+            int selected = previous is null ? -1 : addresses.FindIndex(address => address == previous);
+            _walletAddressCombo.SelectedIndex = selected >= 0 ? selected : (addresses.Count > 0 ? 0 : -1);
+            _walletAddressCombo.EndUpdate();
+            _walletKeyStatus.Text = addresses.Count == 0
+                ? "В кошельке нет доступных адресов."
+                : $"Найдено адресов: {addresses.Count}. Экспорт ключа создаёт незашифрованный текстовый файл.";
+        }
+        catch (Exception ex)
+        {
+            _walletAddresses.Clear();
+            _walletAddressCombo.Items.Clear();
+            _walletKeyExportButton.Enabled = false;
+            _walletKeyStatus.Text = "Не удалось загрузить адреса: " + ex.Message;
+        }
+        finally
+        {
+            _loadingWalletAddresses = false;
+            if (_currentPage == "wallet" && !IsDisposed)
+            {
+                _walletAddressCombo.Enabled = true;
+                _refreshWalletAddressesButton.Enabled = IsNodeRunning() && File.Exists(AppPaths.WalletPath);
+                _walletKeyExportButton.Enabled = IsNodeRunning() && _walletAddressCombo.SelectedItem is string;
+            }
+        }
+    }
+
+    private async Task<List<string>> GetWalletAddressesAsync()
+    {
+        if (_rpc is null) throw new InvalidOperationException("Нода GeoCoin не подключена.");
+        const int pageSize = 5000;
+        var addresses = new List<string>();
+        for (int offset = 0; offset < 100_000; offset += pageSize)
+        {
+            JsonElement result = await _rpc.CallAsync("getaddressesbyaccount", new object[] { "*", offset, pageSize });
+            if (result.ValueKind != JsonValueKind.Array)
+                throw new InvalidOperationException("Нода вернула список адресов в неизвестном формате.");
+            int count = 0;
+            foreach (JsonElement item in result.EnumerateArray())
+            {
+                if (item.ValueKind != JsonValueKind.String) continue;
+                string address = item.GetString() ?? "";
+                if (!string.IsNullOrWhiteSpace(address)) addresses.Add(address);
+                count++;
+            }
+            if (count < pageSize) break;
+        }
+        return addresses.Distinct(StringComparer.Ordinal).ToList();
+    }
+
+    private async Task ImportPrivateKeyAsync()
+    {
+        if (!IsNodeRunning() || _rpc is null || !File.Exists(AppPaths.WalletPath)) return;
+        string privateKey = _privateKeyInput.Text.Trim();
+        if (privateKey.Length != 64 || privateKey.Any(character => !Uri.IsHexDigit(character)))
+        {
+            _walletKeyStatus.Text = "Проверьте ключ: нужно ровно 64 шестнадцатеричных символа 0–9, A–F.";
+            return;
+        }
+        if (MessageBox.Show(this,
+                "Этот ключ будет добавлен в текущий кошелёк. Импорт восстановит историю адреса и может занять время. Продолжить?",
+                "Импорт приватного ключа", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
+            return;
+        string? password = PasswordDialog.AskForAction(this, "импортировать приватный ключ");
+        if (password is null) return;
+
+        _walletKeyImportButton.Enabled = false;
+        _walletKeyStatus.Text = "Импортирую ключ и восстанавливаю историю…";
+        try
+        {
+            JsonElement result = await _rpc.CallAsync("importprivkey", new object[] { privateKey, "GeoCoin-Start", password, true, 0 });
+            string address = ReadString(result, "address");
+            bool rescanComplete = result.TryGetProperty("rescan_complete", out JsonElement complete) && complete.ValueKind == JsonValueKind.True;
+            string scanStatus = ReadString(result, "rescan_status");
+            _lastAddress = address;
+            _privateKeyInput.Clear();
+            string importStatus = rescanComplete
+                ? "Ключ добавлен. История адреса восстановлена."
+                : $"Ключ добавлен, но история восстановлена не полностью ({scanStatus}).";
+            await RefreshWalletAddressesAsync();
+            await RefreshStateAsync();
+            _walletKeyStatus.Text = importStatus;
+        }
+        catch (Exception ex)
+        {
+            _walletKeyStatus.Text = "Не удалось импортировать ключ: " + ex.Message;
+        }
+        finally
+        {
+            _walletKeyImportButton.Enabled = IsNodeRunning() && File.Exists(AppPaths.WalletPath);
+        }
+    }
+
+    private async Task ExportPrivateKeyAsync()
+    {
+        if (!IsNodeRunning() || _rpc is null || _walletAddressCombo.SelectedItem is not string address) return;
+        if (MessageBox.Show(this,
+                "Ключ даёт полный контроль над монетами этого адреса. Он будет записан в незашифрованный текстовый файл. Любой, кто получит файл, сможет потратить эти монеты. Продолжить?",
+                "Экспорт секретного ключа", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
+            return;
+        using var dialog = new SaveFileDialog
+        {
+            Title = "Куда сохранить приватный ключ",
+            FileName = "GeoCoin-private-key.txt",
+            Filter = "Текстовый файл (*.txt)|*.txt|Все файлы (*.*)|*.*",
+            AddExtension = true,
+            OverwritePrompt = false
+        };
+        if (dialog.ShowDialog(this) != DialogResult.OK) return;
+        if (File.Exists(dialog.FileName))
+        {
+            MessageBox.Show(this, "Выберите новый файл. Экспорт приватного ключа не перезаписывает существующие файлы.",
+                "Файл уже существует", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+        string? password = PasswordDialog.AskForAction(this, "экспортировать приватный ключ выбранного адреса");
+        if (password is null) return;
+
+        _walletKeyExportButton.Enabled = false;
+        _walletKeyStatus.Text = "Экспортирую ключ выбранного адреса…";
+        try
+        {
+            JsonElement result = await _rpc.CallAsync("dumpprivkey", new object[] { address, password });
+            string privateKey = result.ValueKind == JsonValueKind.String ? result.GetString() ?? "" : "";
+            if (privateKey.Length != 64 || privateKey.Any(character => !Uri.IsHexDigit(character)))
+                throw new InvalidOperationException("Оригинальная нода вернула ключ в неожиданном формате.");
+            await File.WriteAllTextAsync(dialog.FileName, privateKey + Environment.NewLine, new UTF8Encoding(false));
+            _walletKeyStatus.Text = "Ключ сохранён в выбранный файл. Храните его отдельно и никому не передавайте.";
+            MessageBox.Show(this, "Приватный ключ сохранён. Он открывает только выбранный адрес; файл не зашифрован.",
+                "Экспорт завершён", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+        catch (Exception ex)
+        {
+            _walletKeyStatus.Text = "Не удалось экспортировать ключ: " + ex.Message;
+        }
+        finally
+        {
+            _walletKeyExportButton.Enabled = IsNodeRunning() && _walletAddressCombo.SelectedItem is string;
+        }
     }
 
     private async Task SendAsync()
@@ -1446,6 +1878,8 @@ internal sealed class MainForm : Form
         _gpuStatusText = "GPU-майнинг остановлен";
         _gpuHashrateText = "Скорость GPU: —";
         _lastAddress = null;
+        _walletAddresses.Clear();
+        _walletAddressCombo.Items.Clear();
         if (_gpuMinerProcess is { } miner)
         {
             try { if (!miner.HasExited) miner.Kill(entireProcessTree: true); } catch { }
@@ -1510,6 +1944,35 @@ internal sealed class MainForm : Form
 
     private static long ReadInt64(JsonElement value, string property)
         => value.TryGetProperty(property, out JsonElement element) && element.TryGetInt64(out long number) ? number : 0;
+
+    private static string ReadString(JsonElement value, string property)
+        => value.TryGetProperty(property, out JsonElement element) && element.ValueKind == JsonValueKind.String
+            ? element.GetString() ?? ""
+            : "";
+
+    private static decimal ReadDecimal(JsonElement value, string property)
+    {
+        if (!value.TryGetProperty(property, out JsonElement element)) return 0;
+        if (element.ValueKind == JsonValueKind.Number && element.TryGetDecimal(out decimal number)) return number;
+        if (element.ValueKind == JsonValueKind.String && decimal.TryParse(element.GetString(), NumberStyles.Float,
+                CultureInfo.InvariantCulture, out number)) return number;
+        return 0;
+    }
+
+    private static string FormatGcAmount(decimal amount, bool includePositiveSign = false)
+    {
+        string prefix = includePositiveSign && amount > 0 ? "+" : "";
+        return prefix + amount.ToString("0.########", CultureInfo.CurrentCulture) + " GC";
+    }
+
+    private static string FormatTransactionTime(JsonElement entry)
+    {
+        long timestamp = ReadInt64(entry, "time");
+        if (timestamp <= 0) timestamp = ReadInt64(entry, "timereceived");
+        if (timestamp <= 0) return "—";
+        try { return DateTimeOffset.FromUnixTimeSeconds(timestamp).ToLocalTime().ToString("dd.MM.yyyy HH:mm"); }
+        catch (ArgumentOutOfRangeException) { return "—"; }
+    }
 
     private static double ReadDouble(JsonElement value, string property)
     {
