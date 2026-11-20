@@ -11,6 +11,8 @@ Run the setup file and choose **Install**. An internet connection is required: t
 ## Features
 
 - Overview of the local node, synchronization, and wallet balance.
+- A node page with live RPC health, process status, connected peers, and a rolling log that can also be opened as a file.
+- A miner-only RPC profile for a trusted LAN/VPN and a remote GPU subminer page. The remote worker uses a public reward address and miner-role credentials, never a wallet private key or admin RPC password.
 - CPU and GPU mining controls on one page. Start either or both at once; the app shows a separate hashrate for each. GPU rewards use an existing address from the current wallet.
 - Transaction history with dates, operation type, amount, fee, confirmation state, address, and a copyable transaction ID.
 - Sending GeoCoin with an automatically calculated fee and a confirmation screen.
@@ -21,6 +23,8 @@ Run the setup file and choose **Install**. An internet connection is required: t
 - A Windows uninstaller in the Start menu and Installed Apps. Wallet and node data are kept by default; removal of those data is an explicit option.
 
 Mining starts only after the user confirms. Running CPU and GPU mining together can put a heavy load on the computer. GPU mining requires a supported graphics card and working CUDA, HIP, or OpenCL drivers. The app does not install graphics drivers.
+
+GeoCoin has one node process; RPC is an interface on that process. Remote GPU mining binds RPC to a private network address and uses the miner role. The RPC connection uses plain HTTP, so use a trusted LAN or VPN only, allow private networks only in Windows Firewall, and do not forward RPC ports from the internet. The miner password is held only while GeoCoin-Start is open and is regenerated after the app closes.
 
 Wallet and node data stay on this computer under `%LOCALAPPDATA%`. When replacing an existing wallet, GeoCoin-Start first creates an encrypted safety backup and preserves the original wallet file in the local backup folder.
 

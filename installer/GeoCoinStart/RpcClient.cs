@@ -7,10 +7,12 @@ namespace GeoCoinStart;
 internal sealed class GeoCoinRpcClient : IDisposable
 {
     private readonly HttpClient _http;
+    private readonly Uri _endpoint;
     private int _requestId;
 
-    public GeoCoinRpcClient(string username, string password)
+    public GeoCoinRpcClient(string username, string password, string endpoint = "http://127.0.0.1:3033/")
     {
+        _endpoint = new Uri(endpoint, UriKind.Absolute);
         _http = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
         string token = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{username}:{password}"));
         _http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Basic", token);
@@ -27,7 +29,7 @@ internal sealed class GeoCoinRpcClient : IDisposable
         };
 
         using var body = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
-        using var response = await _http.PostAsync("http://127.0.0.1:3033/", body);
+        using var response = await _http.PostAsync(_endpoint, body);
         string json = await response.Content.ReadAsStringAsync();
         response.EnsureSuccessStatusCode();
 

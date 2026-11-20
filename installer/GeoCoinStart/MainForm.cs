@@ -1,5 +1,7 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.Net;
+using System.Net.NetworkInformation;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -36,8 +38,16 @@ internal sealed class MainForm : Form
     private readonly Label _transactionStatus = new();
     private readonly Label _transactionDetails = new();
     private readonly Label _walletKeyStatus = new();
+    private readonly Label _nodeProcessStatus = new();
+    private readonly Label _nodeRpcStatus = new();
+    private readonly Label _nodeRuntimeStatus = new();
+    private readonly Label _nodePeerStatus = new();
+    private readonly Label _nodeProfileHint = new();
+    private readonly TextBox _nodeLogBox = new();
     private readonly NumericUpDown _threadCount = new();
     private readonly ComboBox _gpuDeviceCombo = new();
+    private readonly ComboBox _remoteGpuDeviceCombo = new();
+    private readonly ComboBox _rpcBindCombo = new();
     private readonly ComboBox _walletAddressCombo = new();
     private readonly Button _refreshGpuButton = new();
     private readonly Button _refreshTransactionsButton = new();
@@ -46,10 +56,22 @@ internal sealed class MainForm : Form
     private readonly Button _walletKeyExportButton = new();
     private readonly Button _walletKeyImportButton = new();
     private readonly Button _refreshWalletAddressesButton = new();
+    private readonly Button _nodeProfileCopyButton = new();
+    private readonly Button _nodeLogOpenButton = new();
+    private readonly Button _remoteGpuButton = new();
+    private readonly Button _remoteGpuFindButton = new();
     private readonly TextBox _sendAddress = new();
     private readonly TextBox _sendAmount = new();
     private readonly TextBox _sendPassword = new();
     private readonly TextBox _privateKeyInput = new();
+    private readonly TextBox _minerRpcUserInput = new() { Text = "geocoin-start-miner" };
+    private readonly TextBox _minerRpcPasswordInput = new() { Text = RandomSecret(), UseSystemPasswordChar = true };
+    private readonly TextBox _remoteNodeUrlInput = new() { Text = "http://192.168.1.10:3033/" };
+    private readonly TextBox _remoteMinerUserInput = new() { Text = "geocoin-start-miner" };
+    private readonly TextBox _remoteMinerPasswordInput = new() { UseSystemPasswordChar = true };
+    private readonly TextBox _remoteRewardAddressInput = new();
+    private readonly Button _toggleMinerPasswordVisibilityButton = new();
+    private readonly Button _toggleRemotePasswordVisibilityButton = new();
     private readonly Label _sendMessage = new();
     private readonly Label _receiveAddress = new();
     private readonly Label _receiveMessage = new();
@@ -61,7 +83,7 @@ internal sealed class MainForm : Form
     private readonly Button _gpuMineButton = new();
     private readonly Button _sendButton = new();
     private readonly Button _receiveButton = new();
-    private readonly Button[] _navigation = new Button[6];
+    private readonly Button[] _navigation = new Button[8];
     private readonly System.Windows.Forms.Timer _refreshTimer = new() { Interval = 4000 };
 
     private GeoCoinRpcClient? _rpc;
@@ -72,8 +94,11 @@ internal sealed class MainForm : Form
     private StreamWriter? _logWriter;
     private string? _adminPassword;
     private string? _minerPassword;
+    private string _minerRpcUsername = "geocoin-start-miner";
+    private string _rpcBindAddress = "127.0.0.1";
     private string? _sessionDirectory;
     private string? _minerPassFile;
+    private string? _remoteMinerPassFile;
     private string? _lastAddress;
     private string _currentPage = "overview";
     private string _nodeStatus = "Нода остановлена";
@@ -83,6 +108,10 @@ internal sealed class MainForm : Form
     private int _connections;
     private bool _cpuMiningActive;
     private bool _gpuMiningActive;
+    private bool _remoteGpuMining;
+    private bool _startingNode;
+    private bool _startingRemoteGpu;
+    private bool _rpcHealthy;
     private bool _checkingGpuDevices;
     private bool _gpuDevicesScanned;
     private bool _loadingTransactions;
@@ -120,6 +149,18 @@ internal sealed class MainForm : Form
             else await StartNodeAsync();
             BuildPage();
         };
+        _nodeProfileCopyButton.Click += (_, _) => CopyMinerConnectionProfile();
+        _nodeLogOpenButton.Click += (_, _) => OpenNodeLog();
+        _toggleMinerPasswordVisibilityButton.Click += (_, _) =>
+        {
+            _minerRpcPasswordInput.UseSystemPasswordChar = !_minerRpcPasswordInput.UseSystemPasswordChar;
+            _toggleMinerPasswordVisibilityButton.Text = _minerRpcPasswordInput.UseSystemPasswordChar ? "Показать" : "Скрыть";
+        };
+        _toggleRemotePasswordVisibilityButton.Click += (_, _) =>
+        {
+            _remoteMinerPasswordInput.UseSystemPasswordChar = !_remoteMinerPasswordInput.UseSystemPasswordChar;
+            _toggleRemotePasswordVisibilityButton.Text = _remoteMinerPasswordInput.UseSystemPasswordChar ? "Показать" : "Скрыть";
+        };
         _walletButton.Click += async (_, _) =>
         {
             if (File.Exists(AppPaths.WalletPath)) await BackupWalletAsync();
@@ -134,6 +175,8 @@ internal sealed class MainForm : Form
         _mineButton.Click += async (_, _) => await ToggleCpuMiningAsync();
         _gpuMineButton.Click += async (_, _) => await ToggleGpuMiningAsync();
         _refreshGpuButton.Click += async (_, _) => await RefreshGpuDevicesAsync();
+        _remoteGpuFindButton.Click += async (_, _) => await RefreshGpuDevicesAsync();
+        _remoteGpuButton.Click += async (_, _) => await ToggleRemoteGpuMiningAsync();
         _gpuDeviceCombo.SelectedIndexChanged += (_, _) =>
         {
             if (_gpuMineButton.IsHandleCreated)
@@ -154,7 +197,11 @@ internal sealed class MainForm : Form
         _walletKeyImportButton.Click += async (_, _) => await ImportPrivateKeyAsync();
         _refreshWalletAddressesButton.Click += async (_, _) => await RefreshWalletAddressesAsync();
         _threadCount.ValueChanged += (_, _) => _selectedThreads = (int)_threadCount.Value;
-        _refreshTimer.Tick += async (_, _) => await RefreshStateAsync();
+        _refreshTimer.Tick += async (_, _) =>
+        {
+            await RefreshStateAsync();
+            if (_currentPage == "node") UpdateNodePage();
+        };
         _refreshTimer.Start();
         Shown += (_, _) => FitWindowToScreen();
         DpiChanged += (_, _) =>
@@ -217,8 +264,8 @@ internal sealed class MainForm : Form
             ForeColor = Color.FromArgb(144, 161, 145)
         });
 
-        string[] names = { "Обзор", "Майнинг", "Отправить", "Получить", "История", "Кошелёк" };
-        string[] pages = { "overview", "mining", "send", "receive", "transactions", "wallet" };
+        string[] names = { "Обзор", "Майнинг", "Подмайнер", "Нода", "Отправить", "Получить", "История", "Кошелёк" };
+        string[] pages = { "overview", "mining", "subminer", "node", "send", "receive", "transactions", "wallet" };
         for (int i = 0; i < names.Length; i++)
         {
             int index = i;
@@ -362,6 +409,8 @@ internal sealed class MainForm : Form
         string[] titles = page switch
         {
             "mining" => new[] { "Майнинг", "Майнинг", "Майнинг", "Майнинг" },
+            "subminer" => new[] { "Подмайнер", "Подмайнер", "Подмайнер", "Подмайнер" },
+            "node" => new[] { "Нода и журнал", "Нода и журнал", "Нода и журнал", "Нода и журнал" },
             "send" => new[] { "Отправить монеты", "Отправить монеты", "Отправить монеты", "Отправить монеты" },
             "receive" => new[] { "Получить монеты", "Получить монеты", "Получить монеты", "Получить монеты" },
             "transactions" => new[] { "История транзакций", "История транзакций", "История транзакций", "История транзакций" },
@@ -369,7 +418,7 @@ internal sealed class MainForm : Form
             _ => new[] { "Обзор", "Обзор", "Обзор", "Обзор" }
         };
         _pageTitle.Text = titles[0];
-        string[] pages = { "overview", "mining", "send", "receive", "transactions", "wallet" };
+        string[] pages = { "overview", "mining", "subminer", "node", "send", "receive", "transactions", "wallet" };
         for (int i = 0; i < _navigation.Length; i++)
         {
             bool selected = pages[i] == page;
@@ -377,12 +426,13 @@ internal sealed class MainForm : Form
             _navigation[i].ForeColor = selected ? Color.FromArgb(241, 218, 173) : Color.FromArgb(206, 215, 205);
         }
         BuildPage();
-        if (page == "mining" && !_gpuDevicesScanned && !_checkingGpuDevices && File.Exists(AppPaths.GpuMinerPath))
-            _ = RefreshGpuDevicesAsync();
         if (page == "transactions" && IsNodeRunning() && File.Exists(AppPaths.WalletPath))
             _ = RefreshTransactionsAsync();
         if (page == "wallet" && IsNodeRunning() && File.Exists(AppPaths.WalletPath))
             _ = RefreshWalletAddressesAsync();
+        if ((page == "mining" || page == "subminer") && !_gpuDevicesScanned && !_checkingGpuDevices && File.Exists(AppPaths.GpuMinerPath))
+            _ = RefreshGpuDevicesAsync();
+        if (page == "node") UpdateNodePage();
     }
 
     private void BuildPage()
@@ -393,6 +443,8 @@ internal sealed class MainForm : Form
         switch (_currentPage)
         {
             case "mining": BuildMiningPage(); break;
+            case "subminer": BuildSubminerPage(); break;
+            case "node": BuildNodePage(); break;
             case "send": BuildSendPage(); break;
             case "receive": BuildReceivePage(); break;
             case "transactions": BuildTransactionsPage(); break;
@@ -437,8 +489,9 @@ internal sealed class MainForm : Form
         _peerState.ForeColor = Muted;
         networkCard.Controls.Add(_peerState);
 
-        _nodeButton.Text = _nodeProcess is null ? "Запустить ноду" : "Остановить ноду";
+        _nodeButton.Text = _startingNode ? "Запускаю ноду…" : !IsNodeProcessRunning() ? "Запустить ноду" : "Остановить ноду";
         StylePrimaryButton(_nodeButton, new Point(22, 416), new Size(192, 42));
+        _nodeButton.Enabled = !_remoteGpuMining && !_startingRemoteGpu && !_startingNode;
         _pagePanel.Controls.Add(_nodeButton);
 
         bool hasWallet = File.Exists(AppPaths.WalletPath);
@@ -545,14 +598,278 @@ internal sealed class MainForm : Form
         _gpuRewardAddress.AutoEllipsis = true;
         card.Controls.Add(_gpuRewardAddress);
 
-        _gpuMineButton.Text = _gpuMiningActive ? "Остановить GPU" : "Запустить GPU";
-        StylePrimaryButton(_gpuMineButton, new Point(24, 444), new Size(204, 42));
-        _gpuMineButton.Enabled = IsNodeRunning() && File.Exists(AppPaths.WalletPath) &&
-            (_gpuMiningActive || _gpuDeviceCombo.SelectedItem is GpuDevice);
+        _gpuMineButton.Text = _remoteGpuMining ? "Перейти к подмайнеру" : _gpuMiningActive ? "Остановить GPU" : "Запустить GPU";
+        StylePrimaryButton(_gpuMineButton, new Point(24, 444), new Size(_remoteGpuMining ? 240 : 204, 42));
+        _gpuMineButton.Enabled = _remoteGpuMining || (IsNodeRunning() && File.Exists(AppPaths.WalletPath) &&
+            (_gpuMiningActive || _gpuDeviceCombo.SelectedItem is GpuDevice));
         card.Controls.Add(_gpuMineButton);
 
         if (!IsNodeRunning()) AddParagraph("Сначала запустите ноду на странице «Обзор».", 24, 586, cardWidth - 48, 32);
         else if (!File.Exists(AppPaths.WalletPath)) AddParagraph("Сначала создайте или импортируйте кошелёк на странице «Обзор».", 24, 586, cardWidth - 48, 32);
+    }
+
+    private void BuildNodePage()
+    {
+        int cardWidth = PageCardWidth(800);
+        AddParagraph("Один процесс GeoCoin выполняет работу ноды. RPC — интерфейс управления этой же нодой; отдельно запускать вторую RPC-ноду не нужно.",
+            22, 12, cardWidth, 48);
+
+        Panel statusCard = AddCard(22, 70, cardWidth, 132);
+        AddLabel(statusCard, "СОСТОЯНИЕ УЗЛА", 22, 15, 280, 20, Muted, 9, bold: true);
+        _nodeProcessStatus.Location = UiPoint(22, 40);
+        _nodeProcessStatus.Size = UiSize(Math.Max(230, cardWidth - 44), 26);
+        _nodeProcessStatus.Font = new Font("Segoe UI Semibold", 14, FontStyle.Bold);
+        statusCard.Controls.Add(_nodeProcessStatus);
+        _nodeRpcStatus.Location = UiPoint(22, 72);
+        _nodeRpcStatus.Size = UiSize(240, 22);
+        _nodeRpcStatus.ForeColor = Muted;
+        statusCard.Controls.Add(_nodeRpcStatus);
+        _nodePeerStatus.Location = UiPoint(270, 72);
+        _nodePeerStatus.Size = UiSize(Math.Max(190, cardWidth - 294), 22);
+        _nodePeerStatus.ForeColor = Muted;
+        statusCard.Controls.Add(_nodePeerStatus);
+        _nodeButton.Text = _startingNode ? "Запускаю ноду…" : IsNodeRunning() ? "Остановить ноду" : "Запустить ноду";
+        StylePrimaryButton(_nodeButton, new Point(22, 98), new Size(190, 34));
+        _nodeButton.Enabled = !_remoteGpuMining && !_startingRemoteGpu && !_startingNode;
+        statusCard.Controls.Add(_nodeButton);
+        _nodeRuntimeStatus.Location = UiPoint(228, 104);
+        _nodeRuntimeStatus.Size = UiSize(Math.Max(200, cardWidth - 250), 22);
+        _nodeRuntimeStatus.ForeColor = Muted;
+        statusCard.Controls.Add(_nodeRuntimeStatus);
+
+        Panel rpcCard = AddCard(22, 216, cardWidth, 378);
+        AddLabel(rpcCard, "ДОСТУП ДЛЯ GPU-ПОДМАЙНЕРА", 22, 15, cardWidth - 44, 20, Muted, 9, bold: true);
+        AddLabel(rpcCard, "Адрес прослушивания", 22, 44, 230, 20, Ink, 10, bold: true);
+        _rpcBindCombo.DropDownStyle = ComboBoxStyle.DropDownList;
+        _rpcBindCombo.SelectedIndexChanged -= RpcBindComboSelectedIndexChanged;
+        _rpcBindCombo.Items.Clear();
+        _rpcBindCombo.Items.Add("127.0.0.1 · только этот компьютер");
+        foreach (string address in GetPrivateIpv4Addresses()) _rpcBindCombo.Items.Add(address);
+        int bindIndex = 0;
+        for (int i = 1; i < _rpcBindCombo.Items.Count; i++)
+            if (string.Equals(_rpcBindCombo.Items[i]?.ToString(), _rpcBindAddress, StringComparison.Ordinal)) bindIndex = i;
+        if (bindIndex == 0) _rpcBindAddress = "127.0.0.1";
+        _rpcBindCombo.SelectedIndex = bindIndex;
+        _rpcBindCombo.Location = UiPoint(22, 68);
+        _rpcBindCombo.Size = UiSize(cardWidth - 44, 32);
+        _rpcBindCombo.Enabled = !IsNodeRunning() && !_startingNode;
+        _rpcBindCombo.SelectedIndexChanged += RpcBindComboSelectedIndexChanged;
+        rpcCard.Controls.Add(_rpcBindCombo);
+        AddLabel(rpcCard, "Для подключения с другого ПК выберите частный IP этого компьютера. Используйте только доверенную сеть или VPN; не настраивайте проброс порта из интернета.",
+            22, 106, cardWidth - 44, 44, Muted, 8.5f);
+
+        AddLabel(rpcCard, "Имя пользователя майнера", 22, 158, 250, 20, Ink, 10, bold: true);
+        StyleTextBox(_minerRpcUserInput, new Point(22, 182), new Size(Math.Min(310, cardWidth - 44), 34));
+        _minerRpcUserInput.Enabled = !IsNodeRunning() && !_startingNode;
+        rpcCard.Controls.Add(_minerRpcUserInput);
+        AddLabel(rpcCard, "Пароль майнера", 22, 226, 220, 20, Ink, 10, bold: true);
+        int passwordWidth = Math.Min(370, cardWidth - 160);
+        StyleTextBox(_minerRpcPasswordInput, new Point(22, 250), new Size(passwordWidth, 34));
+        _minerRpcPasswordInput.Enabled = !IsNodeRunning() && !_startingNode;
+        rpcCard.Controls.Add(_minerRpcPasswordInput);
+        _toggleMinerPasswordVisibilityButton.Text = _minerRpcPasswordInput.UseSystemPasswordChar ? "Показать" : "Скрыть";
+        StyleSecondaryButton(_toggleMinerPasswordVisibilityButton, new Point(passwordWidth + 34, 250), new Size(100, 34));
+        rpcCard.Controls.Add(_toggleMinerPasswordVisibilityButton);
+        _nodeProfileCopyButton.Text = "Скопировать данные для подмайнера";
+        StyleSecondaryButton(_nodeProfileCopyButton, new Point(22, 296), new Size(Math.Min(310, cardWidth - 44), 34));
+        rpcCard.Controls.Add(_nodeProfileCopyButton);
+        _nodeProfileHint.Text = _rpcBindAddress == "127.0.0.1"
+            ? "Пароль не сохраняется после закрытия приложения. Для другого ПК выберите частный IP и запустите ноду."
+            : "Пароль действует, пока приложение открыто. Если появится запрос брандмауэра, разрешите только частные сети.";
+        _nodeProfileHint.Location = UiPoint(22, 338);
+        _nodeProfileHint.Size = UiSize(cardWidth - 44, 32);
+        _nodeProfileHint.ForeColor = Muted;
+        rpcCard.Controls.Add(_nodeProfileHint);
+
+        Panel logCard = AddCard(22, 608, cardWidth, 430);
+        AddLabel(logCard, "ЖУРНАЛ НОДЫ И МАЙНЕРА", 22, 15, 320, 20, Muted, 9, bold: true);
+        _nodeLogOpenButton.Text = "Открыть файл журнала";
+        StyleSecondaryButton(_nodeLogOpenButton, new Point(cardWidth - 228, 9), new Size(200, 32));
+        logCard.Controls.Add(_nodeLogOpenButton);
+        _nodeLogBox.Location = UiPoint(18, 50);
+        _nodeLogBox.Size = UiSize(cardWidth - 38, 362);
+        _nodeLogBox.Multiline = true;
+        _nodeLogBox.ReadOnly = true;
+        _nodeLogBox.ScrollBars = ScrollBars.Both;
+        _nodeLogBox.WordWrap = false;
+        _nodeLogBox.Font = new Font("Consolas", 8.5f);
+        _nodeLogBox.BackColor = Color.FromArgb(25, 31, 28);
+        _nodeLogBox.ForeColor = Color.FromArgb(218, 226, 216);
+        _nodeLogBox.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Bottom;
+        logCard.Controls.Add(_nodeLogBox);
+        UpdateNodePage();
+    }
+
+    private void BuildSubminerPage()
+    {
+        int cardWidth = PageCardWidth(800);
+        AddParagraph("Этот компьютер будет работать как GPU-подмайнер и подключится к уже запущенной ноде на другом ПК. Локальную ноду запускать не нужно.",
+            22, 12, cardWidth, 48);
+        Panel card = AddCard(22, 70, cardWidth, 476);
+        AddLabel(card, "ПОДКЛЮЧЕНИЕ К НОДЕ", 22, 16, cardWidth - 44, 20, Muted, 9, bold: true);
+        AddLabel(card, "Адрес RPC-ноды", 22, 48, 230, 20, Ink, 10, bold: true);
+        StyleTextBox(_remoteNodeUrlInput, new Point(22, 72), new Size(Math.Min(470, cardWidth - 44), 34));
+        _remoteNodeUrlInput.Enabled = !_remoteGpuMining && !_startingRemoteGpu;
+        card.Controls.Add(_remoteNodeUrlInput);
+        AddLabel(card, "Имя пользователя майнера", 22, 122, 260, 20, Ink, 10, bold: true);
+        StyleTextBox(_remoteMinerUserInput, new Point(22, 146), new Size(Math.Min(300, cardWidth - 44), 34));
+        _remoteMinerUserInput.Enabled = !_remoteGpuMining && !_startingRemoteGpu;
+        card.Controls.Add(_remoteMinerUserInput);
+        AddLabel(card, "Пароль роли майнера", 22, 194, 240, 20, Ink, 10, bold: true);
+        int remotePassWidth = Math.Min(370, cardWidth - 160);
+        StyleTextBox(_remoteMinerPasswordInput, new Point(22, 218), new Size(remotePassWidth, 34));
+        _remoteMinerPasswordInput.Enabled = !_remoteGpuMining && !_startingRemoteGpu;
+        card.Controls.Add(_remoteMinerPasswordInput);
+        _toggleRemotePasswordVisibilityButton.Text = _remoteMinerPasswordInput.UseSystemPasswordChar ? "Показать" : "Скрыть";
+        StyleSecondaryButton(_toggleRemotePasswordVisibilityButton, new Point(remotePassWidth + 34, 218), new Size(100, 34));
+        card.Controls.Add(_toggleRemotePasswordVisibilityButton);
+        AddLabel(card, "Адрес для награды", 22, 266, 260, 20, Ink, 10, bold: true);
+        StyleTextBox(_remoteRewardAddressInput, new Point(22, 290), new Size(Math.Min(520, cardWidth - 44), 34));
+        _remoteRewardAddressInput.Enabled = !_remoteGpuMining && !_startingRemoteGpu;
+        card.Controls.Add(_remoteRewardAddressInput);
+        AddLabel(card, "Видеокарта", 22, 338, 200, 20, Ink, 10, bold: true);
+        _remoteGpuDeviceCombo.DropDownStyle = ComboBoxStyle.DropDownList;
+        GpuDevice? previous = _remoteGpuDeviceCombo.SelectedItem as GpuDevice;
+        _remoteGpuDeviceCombo.Items.Clear();
+        foreach (GpuDevice device in _gpuDevices) _remoteGpuDeviceCombo.Items.Add(device);
+        int selected = previous is null ? -1 : _gpuDevices.FindIndex(device => device.Backend == previous.Backend && device.Id == previous.Id);
+        _remoteGpuDeviceCombo.SelectedIndex = selected >= 0 ? selected : (_remoteGpuDeviceCombo.Items.Count > 0 ? 0 : -1);
+        _remoteGpuDeviceCombo.Location = UiPoint(22, 362);
+        _remoteGpuDeviceCombo.Size = UiSize(Math.Max(240, cardWidth - 160), 34);
+        _remoteGpuDeviceCombo.Enabled = !_remoteGpuMining && !_startingRemoteGpu;
+        card.Controls.Add(_remoteGpuDeviceCombo);
+        _remoteGpuFindButton.Text = "Найти";
+        StyleSecondaryButton(_remoteGpuFindButton, new Point(cardWidth - 122, 360), new Size(96, 36));
+        _remoteGpuFindButton.Enabled = !_remoteGpuMining && !_startingRemoteGpu && !_checkingGpuDevices;
+        card.Controls.Add(_remoteGpuFindButton);
+        _gpuMiningState.Text = _gpuStatusText;
+        _gpuMiningState.Location = UiPoint(22, 402);
+        _gpuMiningState.AutoSize = true;
+        _gpuMiningState.ForeColor = _remoteGpuMining ? Color.FromArgb(53, 119, 74) : Muted;
+        card.Controls.Add(_gpuMiningState);
+        _miningHashrate.Text = _gpuHashrateText;
+        _miningHashrate.Location = UiPoint(330, 402);
+        _miningHashrate.Size = UiSize(Math.Max(180, cardWidth - 360), 24);
+        _miningHashrate.ForeColor = Muted;
+        card.Controls.Add(_miningHashrate);
+        _remoteGpuButton.Text = _remoteGpuMining ? "Остановить подмайнер" : _startingRemoteGpu ? "Подключаюсь…" : "Подключить и начать GPU-майнинг";
+        StylePrimaryButton(_remoteGpuButton, new Point(22, 432), new Size(300, 36));
+        _remoteGpuButton.Enabled = _remoteGpuMining || (!_startingRemoteGpu && !_checkingGpuDevices && !IsNodeRunning() &&
+            _gpuMinerProcess is null && _remoteGpuDeviceCombo.SelectedItem is GpuDevice);
+        card.Controls.Add(_remoteGpuButton);
+        AddParagraph("На узле нужен miner RPC-пользователь и пароль; admin RPC и пароль кошелька сюда не вводите. Подключайтесь только по доверенной LAN/VPN: RPC не шифрует пароль при передаче.",
+            22, 554, cardWidth, 54);
+    }
+
+    private void RpcBindComboSelectedIndexChanged(object? sender, EventArgs e)
+    {
+        if (_rpcBindCombo.SelectedIndex == 0 || _rpcBindCombo.SelectedItem is null)
+            _rpcBindAddress = "127.0.0.1";
+        else _rpcBindAddress = _rpcBindCombo.SelectedItem.ToString() ?? "127.0.0.1";
+        _nodeProfileHint.Text = _rpcBindAddress == "127.0.0.1"
+            ? "Пароль не сохраняется после закрытия приложения. Для другого ПК выберите частный IP и запустите ноду."
+            : "Пароль действует, пока приложение открыто. Если появится запрос брандмауэра, разрешите только частные сети.";
+    }
+
+    private void UpdateNodePage()
+    {
+        if (IsDisposed || _currentPage != "node") return;
+        bool running = IsNodeRunning();
+        _nodeProcessStatus.Text = running
+            ? _nodeStatus
+            : (_startingNode ? "Нода запускается…" : _startingRemoteGpu ? "Подключаю GPU к удалённой ноде…" :
+                _remoteGpuMining ? "Локальная нода остановлена · работает режим подмайнера" : "Нода остановлена");
+        _nodeProcessStatus.ForeColor = running ? Color.FromArgb(53, 119, 74) : Muted;
+        _nodeRpcStatus.Text = running ? (_rpcHealthy ? "RPC отвечает" : "Процесс запущен · проверяю RPC…") : "RPC не запущен";
+        _nodeRpcStatus.ForeColor = _rpcHealthy ? Color.FromArgb(53, 119, 74) : Muted;
+        _nodePeerStatus.Text = running ? $"Блоков: {_height:N0} · подключений: {_connections}" : "Сеть: —";
+        string runTime = "";
+        if (_nodeProcess is { } process && IsNodeProcessRunning())
+        {
+            try { runTime = $"PID {process.Id} · запущена в {process.StartTime.ToString("HH:mm:ss", CultureInfo.CurrentCulture)}"; }
+            catch { runTime = $"PID {process.Id}"; }
+        }
+        _nodeRuntimeStatus.Text = runTime;
+        if (_nodeButton.IsHandleCreated)
+        {
+            _nodeButton.Text = _startingNode ? "Запускаю ноду…" : running ? "Остановить ноду" : "Запустить ноду";
+            _nodeButton.Enabled = !_remoteGpuMining && !_startingRemoteGpu && !_startingNode;
+        }
+        if (_nodeProfileCopyButton.IsHandleCreated)
+            _nodeProfileCopyButton.Enabled = running && _rpcBindAddress != "127.0.0.1";
+        if (_nodeLogBox.IsHandleCreated)
+        {
+            string content = ReadNodeLogTail();
+            if (!string.Equals(content, _nodeLogBox.Text, StringComparison.Ordinal))
+            {
+                _nodeLogBox.Text = content;
+                _nodeLogBox.SelectionStart = _nodeLogBox.TextLength;
+                _nodeLogBox.ScrollToCaret();
+            }
+        }
+    }
+
+    private static List<string> GetPrivateIpv4Addresses()
+    {
+        var addresses = new SortedSet<string>(StringComparer.Ordinal);
+        try
+        {
+            foreach (NetworkInterface nic in NetworkInterface.GetAllNetworkInterfaces())
+            {
+                if (nic.OperationalStatus != OperationalStatus.Up) continue;
+                foreach (UnicastIPAddressInformation item in nic.GetIPProperties().UnicastAddresses)
+                {
+                    IPAddress address = item.Address;
+                    if (address.AddressFamily != System.Net.Sockets.AddressFamily.InterNetwork || IPAddress.IsLoopback(address)) continue;
+                    byte[] bytes = address.GetAddressBytes();
+                    bool privateAddress = bytes[0] == 10 ||
+                        (bytes[0] == 172 && bytes[1] >= 16 && bytes[1] <= 31) ||
+                        (bytes[0] == 192 && bytes[1] == 168);
+                    if (privateAddress) addresses.Add(address.ToString());
+                }
+            }
+        }
+        catch { }
+        return addresses.ToList();
+    }
+
+    private string ReadNodeLogTail()
+    {
+        if (!File.Exists(AppPaths.LogPath)) return "Журнал появится после запуска ноды.";
+        try
+        {
+            using var stream = new FileStream(AppPaths.LogPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            const int maxBytes = 96 * 1024;
+            if (stream.Length > maxBytes) stream.Seek(-maxBytes, SeekOrigin.End);
+            using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+            string[] lines = reader.ReadToEnd().Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+            return string.Join(Environment.NewLine, lines.TakeLast(300));
+        }
+        catch (IOException) { return "Не удалось прочитать журнал. Попробуйте открыть файл отдельно."; }
+    }
+
+    private void OpenNodeLog()
+    {
+        Directory.CreateDirectory(AppPaths.DataRoot);
+        if (!File.Exists(AppPaths.LogPath)) File.WriteAllText(AppPaths.LogPath, "Журнал GeoCoin-Start" + Environment.NewLine);
+        Process.Start(new ProcessStartInfo { FileName = AppPaths.LogPath, UseShellExecute = true });
+    }
+
+    private void CopyMinerConnectionProfile()
+    {
+        if (!IsNodeRunning() || _rpcBindAddress == "127.0.0.1" || string.IsNullOrWhiteSpace(_minerPassword))
+        {
+            MessageBox.Show(this, "Для подключения другого ПК сначала запустите ноду с частным IP на странице «Нода». Не публикуйте RPC в интернете.",
+                "Нет удалённого доступа", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+        string profile = $"RPC URL: http://{_rpcBindAddress}:3033/{Environment.NewLine}" +
+                         $"Пользователь майнера: {_minerRpcUsername}{Environment.NewLine}" +
+                         $"Пароль майнера: {_minerPassword}{Environment.NewLine}" +
+                         "Вставьте эти данные в GeoCoin-Start → Подмайнер на другом компьютере.";
+        Clipboard.SetText(profile);
+        MessageBox.Show(this, "Данные роли майнера скопированы. Передавайте их только доверенному компьютеру в своей LAN/VPN.",
+            "Профиль скопирован", MessageBoxButtons.OK, MessageBoxIcon.Information);
     }
 
     private void BuildSendPage()
@@ -763,14 +1080,55 @@ internal sealed class MainForm : Form
 
     private async Task StartNodeAsync(bool offerWalletCreation = true, string? suppliedWalletPassword = null)
     {
+        if (_startingNode) return;
+        if (_remoteGpuMining || _startingRemoteGpu)
+        {
+            MessageBox.Show(this, "Сначала остановите GPU-подмайнер. В этом режиме приложение подключено к ноде на другом компьютере.",
+                "Сначала остановите подмайнер", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
         if (!File.Exists(AppPaths.NodePath))
         {
             MessageBox.Show(this, "Файл ноды GeoCoin не найден. Запустите установщик ещё раз.",
                 "GeoCoin-Start", MessageBoxButtons.OK, MessageBoxIcon.Error);
             return;
         }
-        if (_nodeProcess is { HasExited: true }) CleanupNodeSession();
-        if (_nodeProcess is { HasExited: false }) return;
+        if (_nodeProcess is not null && !IsNodeProcessRunning()) CleanupNodeSession();
+        if (IsNodeProcessRunning()) return;
+
+        _minerRpcUsername = _minerRpcUserInput.Text.Trim();
+        string minerPassword = _minerRpcPasswordInput.Text;
+        _minerPassword = minerPassword;
+        if (string.IsNullOrWhiteSpace(_minerRpcUsername) || _minerRpcUsername.Contains(':') || _minerRpcUsername.Any(char.IsWhiteSpace))
+        {
+            MessageBox.Show(this, "Имя miner RPC должно быть непустым и не содержать пробелов или двоеточия.",
+                "Проверьте имя пользователя", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+        if (string.Equals(_minerRpcUsername, "geocoin-start", StringComparison.OrdinalIgnoreCase))
+        {
+            MessageBox.Show(this, "Для подмайнера задайте отдельное имя пользователя, отличное от admin RPC.",
+                "Имя занято", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+        if (minerPassword.Length < 16 || minerPassword.Contains('\r') || minerPassword.Contains('\n'))
+        {
+            MessageBox.Show(this, "Задайте для miner RPC пароль не короче 16 символов без переводов строки.",
+                "Проверьте пароль", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+        if (_rpcBindAddress != "127.0.0.1" && !GetPrivateIpv4Addresses().Contains(_rpcBindAddress, StringComparer.Ordinal))
+        {
+            MessageBox.Show(this, "Выбранный сетевой адрес больше не активен. Откройте страницу «Нода», выберите актуальный частный IP и запустите снова.",
+                "Обновите адрес RPC", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            _rpcBindAddress = "127.0.0.1";
+            return;
+        }
+        if (_rpcBindAddress != "127.0.0.1" && MessageBox.Show(this,
+                $"Открыть miner RPC на частном адресе {_rpcBindAddress}:3033?\n\n" +
+                "Продолжайте только в доверенной локальной сети или VPN. Ограничьте порт 3033 в брандмауэре и не настраивайте проброс порта из интернета.",
+                "Разрешить подключение подмайнера", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
+            return;
 
         string? walletPassword = null;
         bool existingWallet = File.Exists(AppPaths.WalletPath);
@@ -780,25 +1138,26 @@ internal sealed class MainForm : Form
             if (walletPassword is null) return;
         }
 
-        Directory.CreateDirectory(AppPaths.DataRoot);
         string sessionDirectory = Path.Combine(Path.GetTempPath(), "geocoin-start-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(sessionDirectory);
-        _adminPassword = RandomSecret();
-        _minerPassword = RandomSecret();
-        _sessionDirectory = sessionDirectory;
-        string adminFile = Path.Combine(sessionDirectory, "rpc-admin.pass");
-        _minerPassFile = Path.Combine(sessionDirectory, "rpc-miner.pass");
-        string? walletFile = existingWallet ? Path.Combine(sessionDirectory, "wallet.pass") : null;
-        var secretEncoding = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
-        await File.WriteAllTextAsync(adminFile, _adminPassword + Environment.NewLine, secretEncoding);
-        await File.WriteAllTextAsync(_minerPassFile, _minerPassword + Environment.NewLine, secretEncoding);
-        if (walletFile is not null) await File.WriteAllTextAsync(walletFile, walletPassword + Environment.NewLine, secretEncoding);
-
+        _startingNode = true;
         _nodeStatus = "Запускаю ноду…";
+        _rpcHealthy = false;
         UpdateStatus();
         BuildPage();
         try
         {
+            Directory.CreateDirectory(AppPaths.DataRoot);
+            Directory.CreateDirectory(sessionDirectory);
+            _adminPassword = RandomSecret();
+            _sessionDirectory = sessionDirectory;
+            string adminFile = Path.Combine(sessionDirectory, "rpc-admin.pass");
+            _minerPassFile = Path.Combine(sessionDirectory, "rpc-miner.pass");
+            string? walletFile = existingWallet ? Path.Combine(sessionDirectory, "wallet.pass") : null;
+            var secretEncoding = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
+            await File.WriteAllTextAsync(adminFile, _adminPassword + Environment.NewLine, secretEncoding);
+            await File.WriteAllTextAsync(_minerPassFile, minerPassword + Environment.NewLine, secretEncoding);
+            if (walletFile is not null) await File.WriteAllTextAsync(walletFile, walletPassword + Environment.NewLine, secretEncoding);
+
             var start = new ProcessStartInfo
             {
                 FileName = AppPaths.NodePath,
@@ -811,11 +1170,13 @@ internal sealed class MainForm : Form
             AddArgument(start, "--data-dir", AppPaths.DataRoot);
             AddArgument(start, "--network", "degree");
             start.ArgumentList.Add("--rpc");
-            AddArgument(start, "--rpc-bind", "127.0.0.1");
+            AddArgument(start, "--rpc-bind", _rpcBindAddress);
+            if (_rpcBindAddress != "127.0.0.1")
+                start.Environment["GEOCOIN_ALLOW_PUBLIC_RPC_BIND"] = "1";
             AddArgument(start, "--rpc-port", "3033");
             AddArgument(start, "--rpc-user", "geocoin-start");
             AddArgument(start, "--rpc-pass-file", adminFile);
-            AddArgument(start, "--rpc-miner-user", "geocoin-start-miner");
+            AddArgument(start, "--rpc-miner-user", _minerRpcUsername);
             AddArgument(start, "--rpc-miner-pass-file", _minerPassFile);
             AddArgument(start, "--activation-manifest", AppPaths.ProductionManifestPath);
             AddArgument(start, "--status-interval", "30");
@@ -832,19 +1193,21 @@ internal sealed class MainForm : Form
             _nodeProcess.BeginErrorReadLine();
 
             _rpc?.Dispose();
-            _rpc = new GeoCoinRpcClient("geocoin-start", _adminPassword);
+            string localRpcEndpoint = $"http://{_rpcBindAddress}:3033/";
+            _rpc = new GeoCoinRpcClient("geocoin-start", _adminPassword, localRpcEndpoint);
             _minerRpc?.Dispose();
-            _minerRpc = new GeoCoinRpcClient("geocoin-start-miner", _minerPassword!);
+            _minerRpc = new GeoCoinRpcClient(_minerRpcUsername, _minerPassword!, localRpcEndpoint);
 
             bool ready = false;
             for (int attempt = 0; attempt < 120; attempt++)
             {
-                if (_nodeProcess.HasExited)
+                if (!IsNodeProcessRunning())
                     throw new InvalidOperationException("Нода завершила запуск с ошибкой. Подробности записаны в файл журнала.");
                 try
                 {
                     await _rpc.CallAsync("help");
                     ready = true;
+                    _rpcHealthy = true;
                     break;
                 }
                 catch { await Task.Delay(1000); }
@@ -865,11 +1228,11 @@ internal sealed class MainForm : Form
         }
         catch (Exception ex)
         {
-            if (_nodeProcess is { HasExited: false })
+            if (IsNodeProcessRunning() && _nodeProcess is Process failedNode)
             {
-                try { _nodeProcess.Kill(entireProcessTree: true); await _nodeProcess.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10)); } catch { }
+                try { failedNode.Kill(entireProcessTree: true); await failedNode.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10)); } catch { }
             }
-            bool stopped = _nodeProcess is null || _nodeProcess.HasExited;
+            bool stopped = !IsNodeProcessRunning();
             if (stopped)
             {
                 if (_nodeProcess is not null) CleanupNodeSession();
@@ -882,10 +1245,15 @@ internal sealed class MainForm : Form
                     _adminPassword = null;
                 }
                 _nodeStatus = "Нода не подключена";
+                _rpcHealthy = false;
             }
             else _nodeStatus = "Нода продолжает работать";
             MessageBox.Show(this, ex.Message + "\n\nЖурнал: " + AppPaths.LogPath,
                 "Не удалось запустить GeoCoin", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+        finally
+        {
+            _startingNode = false;
         }
         UpdateStatus();
         BuildPage();
@@ -893,7 +1261,7 @@ internal sealed class MainForm : Form
 
     private async Task StopNodeAsync()
     {
-        if (_nodeProcess is null || _nodeProcess.HasExited) return;
+        if (!IsNodeProcessRunning()) return;
         _nodeStatus = "Останавливаю ноду…";
         UpdateStatus();
         try
@@ -905,12 +1273,13 @@ internal sealed class MainForm : Form
                 _cpuMiningActive = false;
             }
             if (_rpc is not null) await _rpc.CallAsync("stop");
-            for (int i = 0; i < 200 && !_nodeProcess.HasExited; i++) await Task.Delay(100);
-            if (!_nodeProcess.HasExited)
+            for (int i = 0; i < 200 && IsNodeProcessRunning(); i++) await Task.Delay(100);
+            if (IsNodeProcessRunning())
                 throw new TimeoutException("Нода ещё завершает работу. Подождите немного и повторите.");
             await StopGpuMinerAsync();
             CleanupNodeSession();
             _nodeStatus = "Нода остановлена";
+            _rpcHealthy = false;
             _balance = 0;
             _height = 0;
             _headers = 0;
@@ -1088,13 +1457,13 @@ internal sealed class MainForm : Form
     {
         if (_checkingGpuDevices || _gpuMiningActive) return;
         _checkingGpuDevices = true;
-        if (_currentPage == "mining") BuildPage();
+        if (_currentPage == "mining" || _currentPage == "subminer") BuildPage();
         if (!File.Exists(AppPaths.GpuMinerPath))
         {
             _gpuStatusText = "GPU-майнер не найден. Переустановите GeoCoin-Start.";
             _gpuDevicesScanned = true;
             _checkingGpuDevices = false;
-            if (_currentPage == "mining") BuildPage();
+            if (_currentPage == "mining" || _currentPage == "subminer") BuildPage();
             return;
         }
 
@@ -1156,13 +1525,13 @@ internal sealed class MainForm : Form
         {
             _gpuDevicesScanned = true;
             _gpuStatusText = "Не удалось проверить видеокарту.";
-            if (_currentPage == "mining")
+            if (_currentPage == "mining" || _currentPage == "subminer")
                 MessageBox.Show(this, ex.Message, "Проверка GPU", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
         finally
         {
             _checkingGpuDevices = false;
-            if (_currentPage == "mining") BuildPage();
+            if (_currentPage == "mining" || _currentPage == "subminer") BuildPage();
         }
     }
 
@@ -1203,6 +1572,11 @@ internal sealed class MainForm : Form
 
     private async Task ToggleGpuMiningAsync()
     {
+        if (_remoteGpuMining)
+        {
+            SetPage("subminer");
+            return;
+        }
         if (_gpuMiningActive || _gpuMinerProcess is not null)
         {
             await StopGpuMinerAsync();
@@ -1214,6 +1588,12 @@ internal sealed class MainForm : Form
 
     private async Task StartGpuMiningAsync()
     {
+        if (_remoteGpuMining)
+        {
+            MessageBox.Show(this, "Сейчас GPU-процесс подключён к удалённой ноде. Управляйте им на странице «Подмайнер».",
+                "Работает подмайнер", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
         if (!IsNodeRunning() || _rpc is null || _minerPassFile is null || !File.Exists(_minerPassFile)) return;
         if (!File.Exists(AppPaths.GpuMinerPath))
         {
@@ -1247,8 +1627,8 @@ internal sealed class MainForm : Form
                 RedirectStandardError = true,
                 RedirectStandardInput = true
             };
-            AddArgument(start, "--url", "http://127.0.0.1:3033/");
-            AddArgument(start, "--rpc-user", "geocoin-start-miner");
+            AddArgument(start, "--url", $"http://{_rpcBindAddress}:3033/");
+            AddArgument(start, "--rpc-user", _minerRpcUsername);
             AddArgument(start, "--rpc-pass-file", _minerPassFile);
             AddArgument(start, "--address", address);
             AddArgument(start, "--backend", device.Backend);
@@ -1270,9 +1650,12 @@ internal sealed class MainForm : Form
                         if (!ReferenceEquals(_gpuMinerProcess, miner)) return;
                         _gpuMinerProcess = null;
                         _gpuMiningActive = false;
+                        _remoteGpuMining = false;
+                        DeleteRemoteMinerPassFile();
                         _gpuStatusText = "GPU-майнинг завершён.";
                         _gpuHashrateText = "Скорость GPU: —";
-                        if (!IsDisposed && _currentPage == "mining") BuildPage();
+                        if (!IsDisposed && (_currentPage == "mining" || _currentPage == "subminer")) BuildPage();
+                        if (!IsDisposed && _currentPage == "node") UpdateNodePage();
                     }));
                 }
                 catch (InvalidOperationException) { }
@@ -1296,6 +1679,158 @@ internal sealed class MainForm : Form
         {
             MessageBox.Show(this, ex.Message, "Не удалось запустить GPU-майнинг", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
+    }
+
+    private async Task ToggleRemoteGpuMiningAsync()
+    {
+        if (_startingRemoteGpu) return;
+        if (_remoteGpuMining && _gpuMinerProcess is not null)
+        {
+            await StopGpuMinerAsync();
+            BuildPage();
+            return;
+        }
+        if (_gpuMinerProcess is { HasExited: false })
+        {
+            MessageBox.Show(this, "GPU-майнер уже запущен. Остановите текущий процесс перед сменой режима.",
+                "GPU уже занят", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+        if (IsNodeProcessRunning())
+        {
+            MessageBox.Show(this, "Сначала остановите локальную ноду. Подмайнер работает отдельно и подключается к ноде на другом ПК.",
+                "Остановите локальную ноду", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+        if (!File.Exists(AppPaths.GpuMinerPath))
+        {
+            MessageBox.Show(this, "Официальный GPU-майнер не найден. Переустановите GeoCoin-Start.",
+                "GPU-майнинг недоступен", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+        if (!Uri.TryCreate(_remoteNodeUrlInput.Text.Trim(), UriKind.Absolute, out Uri? endpoint) ||
+            endpoint.Scheme != Uri.UriSchemeHttp ||
+            !string.IsNullOrEmpty(endpoint.UserInfo))
+        {
+            MessageBox.Show(this, "Введите полный адрес RPC-ноды, например http://192.168.1.10:3033/. Не добавляйте имя пользователя или пароль в адрес.",
+                "Проверьте адрес ноды", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+        string username = _remoteMinerUserInput.Text.Trim();
+        string password = _remoteMinerPasswordInput.Text;
+        string address = _remoteRewardAddressInput.Text.Trim();
+        if (string.IsNullOrWhiteSpace(username) || username.Contains(':') || username.Any(char.IsWhiteSpace) || password.Length < 16 || string.IsNullOrWhiteSpace(address))
+        {
+            MessageBox.Show(this, "Укажите имя miner RPC без пробелов, пароль не короче 16 символов и публичный адрес для награды.",
+                "Заполните данные подмайнера", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+        if (_remoteGpuDeviceCombo.SelectedItem is not GpuDevice device)
+        {
+            MessageBox.Show(this, "Нажмите «Найти» и выберите видеокарту.", "Видеокарта не выбрана",
+                MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+        if (MessageBox.Show(this,
+                "Подключить видеокарту к удалённой RPC-ноде?\n\n" +
+                "Передача miner RPC-пароля по обычному HTTP не шифруется. Продолжайте только в своей доверенной локальной сети или VPN. Никогда не вводите здесь admin RPC пароль или пароль кошелька.",
+                "Запустить GPU-подмайнер", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
+            return;
+
+        string? passFile = null;
+        _startingRemoteGpu = true;
+        _gpuStatusText = "Подготавливаю подключение к удалённой ноде…";
+        BuildPage();
+        try
+        {
+            string tempDirectory = Path.Combine(Path.GetTempPath(), "geocoin-start-worker-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tempDirectory);
+            passFile = Path.Combine(tempDirectory, "rpc-miner.pass");
+            await File.WriteAllTextAsync(passFile, password + Environment.NewLine, new UTF8Encoding(false));
+            var start = new ProcessStartInfo
+            {
+                FileName = AppPaths.GpuMinerPath,
+                WorkingDirectory = AppPaths.OfficialDirectory,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                RedirectStandardInput = true
+            };
+            AddArgument(start, "--url", endpoint.ToString());
+            AddArgument(start, "--rpc-user", username);
+            AddArgument(start, "--rpc-pass-file", passFile);
+            AddArgument(start, "--address", address);
+            AddArgument(start, "--backend", device.Backend);
+            AddArgument(start, "--devices", device.Id);
+            start.ArgumentList.Add("--continuous");
+            start.ArgumentList.Add("--control-stdin");
+            start.ArgumentList.Add("--stats-json");
+
+            var miner = new Process { StartInfo = start, EnableRaisingEvents = true };
+            miner.OutputDataReceived += (_, e) => HandleGpuMinerLine(e.Data);
+            miner.ErrorDataReceived += (_, e) => WriteNodeLog("[GPU-подмайнер] " + e.Data);
+            miner.Exited += (_, _) =>
+            {
+                try
+                {
+                    if (IsDisposed || !IsHandleCreated) return;
+                    BeginInvoke((Action)(() =>
+                    {
+                        if (!ReferenceEquals(_gpuMinerProcess, miner)) return;
+                        _gpuMinerProcess = null;
+                        _gpuMiningActive = false;
+                        _remoteGpuMining = false;
+                        DeleteRemoteMinerPassFile();
+                        _gpuStatusText = "GPU-подмайнер отключён.";
+                        _gpuHashrateText = "Скорость GPU: —";
+                        if (!IsDisposed && (_currentPage == "subminer" || _currentPage == "mining")) BuildPage();
+                        if (!IsDisposed && _currentPage == "node") UpdateNodePage();
+                    }));
+                }
+                catch (InvalidOperationException) { }
+            };
+            if (!miner.Start()) throw new InvalidOperationException("Windows не запустил GPU-подмайнер.");
+            _gpuMinerProcess = miner;
+            _remoteMinerPassFile = passFile;
+            passFile = null;
+            miner.BeginOutputReadLine();
+            miner.BeginErrorReadLine();
+            if (miner.HasExited)
+            {
+                _gpuMinerProcess = null;
+                DeleteRemoteMinerPassFile();
+                _remoteGpuMining = false;
+                throw new InvalidOperationException("GPU-подмайнер сразу завершился. Проверьте адрес, miner RPC-пароль и доступность видеокарты.");
+            }
+            _remoteGpuMining = true;
+            _gpuMiningActive = true;
+            WriteNodeLog($"[GPU-подмайнер] Подключение к {endpoint.Host}:{endpoint.Port}, устройство {device.Name}, адрес награды {address}.");
+            _gpuStatusText = $"Подключаюсь к {endpoint.Host}:{endpoint.Port}…";
+            _gpuHashrateText = "Скорость GPU: ожидание данных…";
+            BuildPage();
+        }
+        catch (Exception ex)
+        {
+            if (passFile is not null)
+            {
+                try { Directory.Delete(Path.GetDirectoryName(passFile)!, recursive: true); } catch { }
+            }
+            MessageBox.Show(this, ex.Message, "Не удалось запустить подмайнер", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+        finally
+        {
+            _startingRemoteGpu = false;
+            if (!IsDisposed && (_currentPage == "subminer" || _currentPage == "node")) BuildPage();
+        }
+    }
+
+    private void DeleteRemoteMinerPassFile()
+    {
+        string? passFile = _remoteMinerPassFile;
+        _remoteMinerPassFile = null;
+        if (string.IsNullOrWhiteSpace(passFile)) return;
+        try { Directory.Delete(Path.GetDirectoryName(passFile)!, recursive: true); } catch { }
     }
 
     private async Task<string> GetExistingMiningAddressAsync()
@@ -1329,9 +1864,10 @@ internal sealed class MainForm : Form
             {
                 string message = root.TryGetProperty("message", out JsonElement msg) ? msg.GetString() ?? "Ошибка GPU-майнера" : "Ошибка GPU-майнера";
                 _gpuStatusText = message;
+                WriteNodeLog(($"[{(_remoteGpuMining ? "GPU-подмайнер" : "GPU")}] ") + message);
                 if (!IsDisposed && IsHandleCreated) BeginInvoke((Action)(() =>
                 {
-                    if (_currentPage == "mining") _gpuMiningState.Text = message;
+                        if (_currentPage == "mining" || _currentPage == "subminer") _gpuMiningState.Text = message;
                 }));
             }
             else if (eventName == "status")
@@ -1351,7 +1887,7 @@ internal sealed class MainForm : Form
                 _gpuHashrateText = string.IsNullOrWhiteSpace(rate) ? "Скорость GPU: —" : $"Скорость GPU: {rate}";
                 if (!IsDisposed && IsHandleCreated) BeginInvoke((Action)(() =>
                 {
-                    if (!IsDisposed && _currentPage == "mining")
+                    if (!IsDisposed && (_currentPage == "mining" || _currentPage == "subminer"))
                     {
                         _gpuMiningState.Text = _gpuStatusText;
                         _miningHashrate.Text = _gpuHashrateText;
@@ -1369,6 +1905,8 @@ internal sealed class MainForm : Form
         if (miner is null)
         {
             _gpuMiningActive = false;
+            _remoteGpuMining = false;
+            DeleteRemoteMinerPassFile();
             return;
         }
         try
@@ -1390,6 +1928,8 @@ internal sealed class MainForm : Form
             if (ReferenceEquals(_gpuMinerProcess, miner)) _gpuMinerProcess = null;
             try { miner.Dispose(); } catch { }
             _gpuMiningActive = false;
+            _remoteGpuMining = false;
+            DeleteRemoteMinerPassFile();
             _gpuStatusText = "GPU-майнинг остановлен";
             _gpuHashrateText = "Скорость GPU: —";
         }
@@ -1747,11 +2287,25 @@ internal sealed class MainForm : Form
 
     private async Task RefreshStateAsync()
     {
-        if (_refreshing || !IsNodeRunning() || _rpc is null) return;
+        if (_refreshing) return;
+        if (!IsNodeRunning() || _rpc is null)
+        {
+            _rpcHealthy = false;
+            if (_nodeProcess is not null && !IsNodeProcessRunning())
+            {
+                _nodeStatus = "Нода завершилась";
+                CleanupNodeSession();
+                UpdateStatus();
+                if (_currentPage == "overview") BuildPage();
+            }
+            if (_currentPage == "node") UpdateNodePage();
+            return;
+        }
         _refreshing = true;
         try
         {
             JsonElement chain = await _rpc.CallAsync("getblockchaininfo");
+            _rpcHealthy = true;
             _height = ReadInt64(chain, "blocks");
             _headers = ReadInt64(chain, "headers");
             try
@@ -1790,7 +2344,8 @@ internal sealed class MainForm : Form
         }
         catch
         {
-            if (_nodeProcess?.HasExited == true)
+            _rpcHealthy = false;
+            if (_nodeProcess is not null && !IsNodeProcessRunning())
             {
                 _nodeStatus = "Нода остановлена";
                 CleanupNodeSession();
@@ -1810,11 +2365,22 @@ internal sealed class MainForm : Form
                 _peerState.Text = $"Блоков: {_height:N0}     Узлов сети: {_connections}";
             }
             RefreshMiningControls();
+            if (_currentPage == "node") UpdateNodePage();
         }
     }
 
     private void RefreshMiningControls()
     {
+        if (_currentPage == "subminer" && !IsDisposed)
+        {
+            _gpuMiningState.Text = _gpuStatusText;
+            _miningHashrate.Text = _gpuHashrateText;
+            _remoteGpuButton.Text = _remoteGpuMining ? "Остановить подмайнер" : _startingRemoteGpu ? "Подключаюсь…" : "Подключить и начать GPU-майнинг";
+            _remoteGpuButton.Enabled = _remoteGpuMining || (!_startingRemoteGpu && !_checkingGpuDevices && !IsNodeRunning() &&
+                _gpuMinerProcess is null && _remoteGpuDeviceCombo.SelectedItem is GpuDevice);
+            _remoteGpuDeviceCombo.Enabled = !_remoteGpuMining;
+            _remoteGpuFindButton.Enabled = !_remoteGpuMining && !_checkingGpuDevices;
+        }
         if (_currentPage != "mining" || IsDisposed) return;
         _miningState.Text = _cpuMiningActive
             ? $"CPU-майнинг включён · потоков: {_selectedThreads}"
@@ -1833,9 +2399,9 @@ internal sealed class MainForm : Form
         _gpuRewardAddress.Text = string.IsNullOrWhiteSpace(_lastAddress)
             ? "Адрес награды будет взят из текущего кошелька."
             : "Адрес награды: " + _lastAddress;
-        _gpuMineButton.Text = _gpuMiningActive ? "Остановить GPU" : "Запустить GPU";
-        _gpuMineButton.Enabled = IsNodeRunning() && File.Exists(AppPaths.WalletPath) &&
-            (_gpuMiningActive || _gpuDeviceCombo.SelectedItem is GpuDevice);
+        _gpuMineButton.Text = _remoteGpuMining ? "Перейти к подмайнеру" : _gpuMiningActive ? "Остановить GPU" : "Запустить GPU";
+        _gpuMineButton.Enabled = _remoteGpuMining || (IsNodeRunning() && File.Exists(AppPaths.WalletPath) &&
+            (_gpuMiningActive || _gpuDeviceCombo.SelectedItem is GpuDevice));
         _gpuDeviceCombo.Enabled = !_gpuMiningActive;
         _refreshGpuButton.Enabled = !_gpuMiningActive && !_checkingGpuDevices;
     }
@@ -1851,20 +2417,28 @@ internal sealed class MainForm : Form
 
     private void UpdateStatus()
     {
-        _statusLabel.Text = _nodeProcess is { HasExited: false } ? _nodeStatus : "Нода остановлена";
-        _statusLabel.ForeColor = _nodeProcess is { HasExited: false }
+        bool processRunning = IsNodeProcessRunning();
+        _statusLabel.Text = processRunning ? _nodeStatus : "Нода остановлена";
+        _statusLabel.ForeColor = processRunning
             ? (_nodeStatus.Contains("завершена", StringComparison.OrdinalIgnoreCase)
                 ? Color.FromArgb(44, 117, 69) : Accent)
             : Muted;
-        _statusLabel.BackColor = _nodeProcess is { HasExited: false }
+        _statusLabel.BackColor = processRunning
             ? Color.FromArgb(229, 235, 221) : Color.FromArgb(226, 228, 219);
     }
 
-    private bool IsNodeRunning() => _nodeProcess is { HasExited: false } && _rpc is not null;
+    private bool IsNodeProcessRunning()
+    {
+        if (_nodeProcess is null) return false;
+        try { return !_nodeProcess.HasExited; }
+        catch (InvalidOperationException) { return false; }
+    }
+
+    private bool IsNodeRunning() => IsNodeProcessRunning() && _rpc is not null;
 
     private void CleanupNodeSession()
     {
-        _refreshTimer.Stop();
+        _rpcHealthy = false;
         _rpc?.Dispose();
         _rpc = null;
         _minerRpc?.Dispose();
@@ -1886,9 +2460,11 @@ internal sealed class MainForm : Form
             try { miner.Dispose(); } catch { }
             _gpuMinerProcess = null;
         }
+        _remoteGpuMining = false;
+        DeleteRemoteMinerPassFile();
         _logWriter?.Dispose();
         _logWriter = null;
-        if (_nodeProcess is { HasExited: true })
+        if (_nodeProcess is not null && !IsNodeProcessRunning())
         {
             _nodeProcess.Dispose();
             _nodeProcess = null;
@@ -1902,16 +2478,28 @@ internal sealed class MainForm : Form
 
     private async void HandleClosing(object? sender, FormClosingEventArgs e)
     {
-        if (_allowClose || !IsNodeRunning()) return;
+        if (_startingNode || _startingRemoteGpu)
+        {
+            e.Cancel = true;
+            MessageBox.Show(this, "Дождитесь завершения запуска узла или подмайнера, затем повторите выход.",
+                "Выполняется запуск", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+        bool gpuRunning = _gpuMinerProcess is { HasExited: false };
+        if (_allowClose || (!IsNodeRunning() && !gpuRunning)) return;
         e.Cancel = true;
         if (_closePromptOpen) return;
         _closePromptOpen = true;
-        var result = MessageBox.Show(this, "Перед выходом остановить ноду GeoCoin?", "Закрытие GeoCoin-Start",
+        var result = MessageBox.Show(this, gpuRunning && !IsNodeRunning()
+                ? "Перед выходом остановить GPU-подмайнер?"
+                : "Перед выходом остановить ноду GeoCoin и запущенный GPU-майнер?",
+            "Закрытие GeoCoin-Start",
             MessageBoxButtons.YesNo, MessageBoxIcon.Question);
         if (result == DialogResult.Yes)
         {
-            await StopNodeAsync();
-            if (!IsNodeRunning())
+            if (_gpuMinerProcess is not null) await StopGpuMinerAsync();
+            if (IsNodeRunning()) await StopNodeAsync();
+            if (!IsNodeRunning() && _gpuMinerProcess is null)
             {
                 _allowClose = true;
                 Close();
@@ -1936,7 +2524,12 @@ internal sealed class MainForm : Form
         {
             lock (this)
             {
-                _logWriter?.WriteLine(line);
+                if (_logWriter is not null) _logWriter.WriteLine(line);
+                else
+                {
+                    Directory.CreateDirectory(AppPaths.DataRoot);
+                    File.AppendAllText(AppPaths.LogPath, line + Environment.NewLine, new UTF8Encoding(false));
+                }
             }
         }
         catch { }
