@@ -1,6 +1,6 @@
 # GeoCoin-Start — Windows
 
-Russian/English installer and simplified GeoCoin wallet for Windows 10/11 x64. The wallet interface also supports light and dark themes; both selections are saved locally.
+Multilingual installer and simplified GeoCoin wallet for Windows 10/11 x64. Russian, English, Simplified Chinese, Brazilian Portuguese, and Italian are available in both the installer and wallet. The wallet interface also supports light and dark themes; both selections are saved locally.
 
 ## What it includes
 

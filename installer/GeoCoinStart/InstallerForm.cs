@@ -11,6 +11,40 @@ internal sealed class InstallerForm : Form
 {
     private sealed record InstallProgress(int Percent, string Message);
 
+    private static readonly Dictionary<string, string> RussianToEnglish = new(StringComparer.Ordinal)
+    {
+        ["Установка GeoCoin-Start"] = "Install GeoCoin-Start",
+        ["просто и по шагам"] = "simple and step by step",
+        ["Приложение уже установлено. Кнопка ниже обновит его до версии из этого установщика."] = "The app is already installed. The button below will update it to the version in this installer.",
+        ["Один мастер установки. Официальный GeoCoin скачается автоматически."] = "One setup wizard. The official GeoCoin package will be downloaded automatically.",
+        ["Для установки нужен интернет. Загрузчик сверит официальный пакет GeoCoin с контрольной суммой."] = "Internet is required. The installer will verify the official GeoCoin package checksum.",
+        ["Дальше вас ждут обзор, майнинг, отправка и получение; файлы кошелька останутся на этом компьютере."] = "Next you can explore the overview, mine, send and receive coins. Wallet files stay on this computer.",
+        ["Оригинальный проект: NoemaCrypt / GeoCoin ↗"] = "Original project: NoemaCrypt / GeoCoin ↗",
+        ["Знак GeoCoin: geocoin.network ↗"] = "GeoCoin symbol: geocoin.network ↗",
+        ["Редистрибьютор: TheTimkol ↗"] = "Redistributor: TheTimkol ↗",
+        ["Готово к обновлению GeoCoin-Start"] = "Ready to update GeoCoin-Start",
+        ["Готово к установке"] = "Ready to install",
+        ["Обновить GeoCoin-Start"] = "Update GeoCoin-Start",
+        ["Установить"] = "Install",
+        ["Перед обновлением закройте GeoCoin-Start и остановите ноду. Затем запустите установщик снова."] = "Close GeoCoin-Start before updating. Stop the node too, then run the installer again.",
+        ["Сначала закройте GeoCoin-Start"] = "Close GeoCoin-Start first",
+        ["Подготавливаю установку…"] = "Preparing installation…",
+        ["Установка завершена. Открываю приложение…"] = "Installation complete. Opening the app…",
+        ["Установка завершена."] = "Installation complete.",
+        ["Установка не завершена"] = "Installation did not complete",
+        ["Не удалось установить GeoCoin. Проверьте, что в папке установки достаточно места, и попробуйте ещё раз."] = "Could not install GeoCoin. Check that the installation folder has enough free space, then try again.",
+        ["Проверка целостности официального архива не пройдена."] = "Official archive integrity check failed.",
+        ["В архиве обнаружен недопустимый путь."] = "The archive contains an invalid path.",
+        ["Не удалось определить файл установщика."] = "Could not locate the installer file.",
+        ["Скачиваю официальный пакет GeoCoin…"] = "Downloading the official GeoCoin package…",
+        ["Проверяю официальный пакет…"] = "Verifying the official package…",
+        ["Устанавливаю файлы GeoCoin…"] = "Installing GeoCoin files…",
+        ["Завершаю установку…"] = "Finishing installation…",
+        ["Удалить GeoCoin-Start"] = "Uninstall GeoCoin-Start",
+        ["Простой интерфейс GeoCoin"] = "Simple GeoCoin interface",
+        ["Файл приложения не найден."] = "Application file not found."
+    };
+
     private readonly Label _title = new();
     private readonly PictureBox _logo = new();
     private readonly Label _subtitle = new();
@@ -18,14 +52,17 @@ internal sealed class InstallerForm : Form
     private readonly LinkLabel _originalCredit = new();
     private readonly LinkLabel _symbolCredit = new();
     private readonly LinkLabel _distributorCredit = new();
+    private readonly ComboBox _languageCombo = new();
     private readonly Label _status;
     private readonly ProgressBar _progress;
     private readonly Button _installButton;
     private readonly bool _alreadyInstalled;
+    private string _language;
     private bool _layingOut;
 
     public InstallerForm()
     {
+        _language = GetPreferredLanguage();
         _alreadyInstalled = File.Exists(AppPaths.InstallMarker) && File.Exists(AppPaths.ExecutablePath);
         Text = "Установка GeoCoin-Start";
         Icon = Icon.ExtractAssociatedIcon(Environment.ProcessPath ?? "") ?? SystemIcons.Application;
@@ -86,6 +123,19 @@ internal sealed class InstallerForm : Form
         _distributorCredit.LinkClicked += (_, _) => OpenLink(AppPaths.DistributorUrl);
         Controls.Add(_distributorCredit);
 
+        _languageCombo.DropDownStyle = ComboBoxStyle.DropDownList;
+        _languageCombo.Items.AddRange(UiLocalization.LanguageNames.Cast<object>().ToArray());
+        _languageCombo.SelectedIndex = Math.Max(0, Array.IndexOf(UiLocalization.LanguageCodes, _language));
+        _languageCombo.Size = new Size(138, 30);
+        _languageCombo.Font = new Font("Segoe UI", 9);
+        _languageCombo.SelectedIndexChanged += (_, _) =>
+        {
+            if (_languageCombo.SelectedIndex < 0) return;
+            _language = UiLocalization.LanguageCodes[_languageCombo.SelectedIndex];
+            ApplyInstallerLanguage();
+        };
+        Controls.Add(_languageCombo);
+
         _status = new Label
         {
             Text = _alreadyInstalled ? "Готово к обновлению GeoCoin-Start" : "Готово к установке",
@@ -120,6 +170,7 @@ internal sealed class InstallerForm : Form
 
         Resize += (_, _) => LayoutContent();
         Load += (_, _) => LayoutContent();
+        ApplyInstallerLanguage();
         LayoutContent();
     }
 
@@ -127,36 +178,38 @@ internal sealed class InstallerForm : Form
     {
         if (_alreadyInstalled && IsInstalledAppRunning())
         {
-            MessageBox.Show(this,
-                "Перед обновлением закройте GeoCoin-Start и остановите ноду. Затем запустите установщик снова.",
-                "Сначала закройте GeoCoin-Start", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            MessageBox.Show(this, LocalizeInstallerText("Перед обновлением закройте GeoCoin-Start и остановите ноду. Затем запустите установщик снова."),
+                LocalizeInstallerText("Сначала закройте GeoCoin-Start"), MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
 
         _installButton.Enabled = false;
-        _status.Text = "Подготавливаю установку…";
+        _languageCombo.Enabled = false;
+        _status.Text = LocalizeInstallerText("Подготавливаю установку…");
         try
         {
             var progress = new Progress<InstallProgress>(state =>
             {
                 _progress.Value = Math.Clamp(state.Percent, 0, 100);
-                _status.Text = state.Message;
+                _status.Text = LocalizeInstallerText(state.Message);
                 LayoutContent();
             });
-            await InstallAsync(progress);
-            _status.Text = "Установка завершена. Открываю приложение…";
+            await InstallAsync(progress, _language);
+            SaveAppLanguagePreference();
+            _status.Text = LocalizeInstallerText("Установка завершена. Открываю приложение…");
             LayoutContent();
             LaunchInstalledApp();
             Close();
         }
         catch (Exception ex)
         {
-            _status.Text = "Установка не завершена";
+            _status.Text = LocalizeInstallerText("Установка не завершена");
             LayoutContent();
             MessageBox.Show(this,
-                "Не удалось установить GeoCoin. Проверьте, что в папке установки достаточно места, и попробуйте ещё раз.\n\n" + ex.Message,
+                LocalizeInstallerText("Не удалось установить GeoCoin. Проверьте, что в папке установки достаточно места, и попробуйте ещё раз.") + "\n\n" + ex.Message,
                 "GeoCoin-Start", MessageBoxButtons.OK, MessageBoxIcon.Error);
             _installButton.Enabled = true;
+            _languageCombo.Enabled = true;
         }
     }
 
@@ -178,6 +231,76 @@ internal sealed class InstallerForm : Form
         return false;
     }
 
+    private string LocalizeInstallerText(string russianText)
+    {
+        if (_language == "ru") return russianText;
+        if (russianText.Contains('\n'))
+            return string.Join(Environment.NewLine, russianText.Split('\n').Select(line => LocalizeInstallerText(line.TrimEnd('\r'))));
+        if (!RussianToEnglish.TryGetValue(russianText, out string? english))
+        {
+            var prefix = RussianToEnglish
+                .Where(pair => russianText.StartsWith(pair.Key, StringComparison.Ordinal))
+                .OrderByDescending(pair => pair.Key.Length)
+                .FirstOrDefault();
+            english = prefix.Key is null ? russianText : prefix.Value + russianText[prefix.Key.Length..];
+        }
+        return _language == "en" ? english : UiLocalization.TranslateFromEnglish(_language, english);
+    }
+
+    private void ApplyInstallerLanguage()
+    {
+        Text = LocalizeInstallerText("Установка GeoCoin-Start");
+        _title.Text = LocalizeInstallerText("GeoCoin\nпросто и по шагам");
+        _subtitle.Text = LocalizeInstallerText(_alreadyInstalled
+            ? "Приложение уже установлено. Кнопка ниже обновит его до версии из этого установщика."
+            : "Один мастер установки. Официальный GeoCoin скачается автоматически.");
+        _notes.Text = LocalizeInstallerText("Для установки нужен интернет. Загрузчик сверит официальный пакет GeoCoin с контрольной суммой.\n" +
+                                             "Дальше вас ждут обзор, майнинг, отправка и получение; файлы кошелька останутся на этом компьютере.");
+        _originalCredit.Text = LocalizeInstallerText("Оригинальный проект: NoemaCrypt / GeoCoin ↗");
+        _symbolCredit.Text = LocalizeInstallerText("Знак GeoCoin: geocoin.network ↗");
+        _distributorCredit.Text = LocalizeInstallerText("Редистрибьютор: TheTimkol ↗");
+        _status.Text = LocalizeInstallerText(_alreadyInstalled ? "Готово к обновлению GeoCoin-Start" : "Готово к установке");
+        _installButton.Text = LocalizeInstallerText(_alreadyInstalled ? "Обновить GeoCoin-Start" : "Установить");
+        LayoutContent();
+    }
+
+    private string GetPreferredLanguage()
+    {
+        try
+        {
+            if (File.Exists(AppPaths.UiSettingsPath))
+            {
+                UiPreferences? saved = JsonSerializer.Deserialize<UiPreferences>(File.ReadAllText(AppPaths.UiSettingsPath));
+                if (!string.IsNullOrWhiteSpace(saved?.Language)) return UiLocalization.NormalizeLanguage(saved.Language);
+            }
+        }
+        catch { }
+
+        string language = System.Globalization.CultureInfo.CurrentUICulture.TwoLetterISOLanguageName;
+        return language switch
+        {
+            "en" => "en",
+            "zh" => "zh-CN",
+            "pt" => "pt-BR",
+            "it" => "it",
+            _ => "ru"
+        };
+    }
+
+    private void SaveAppLanguagePreference()
+    {
+        Directory.CreateDirectory(AppPaths.DataRoot);
+        UiPreferences preferences = new() { Language = _language };
+        try
+        {
+            if (File.Exists(AppPaths.UiSettingsPath))
+                preferences = JsonSerializer.Deserialize<UiPreferences>(File.ReadAllText(AppPaths.UiSettingsPath)) ?? preferences;
+        }
+        catch { }
+        preferences.Language = _language;
+        File.WriteAllText(AppPaths.UiSettingsPath, JsonSerializer.Serialize(preferences), new System.Text.UTF8Encoding(false));
+    }
+
     private void LayoutContent()
     {
         if (_layingOut || IsDisposed) return;
@@ -187,6 +310,8 @@ internal sealed class InstallerForm : Form
             const int margin = 36;
             int contentWidth = Math.Max(180, ClientSize.Width - margin * 2);
             int y = 26;
+
+            _languageCombo.Location = new Point(Math.Max(margin, ClientSize.Width - margin - _languageCombo.Width), 20);
 
             _logo.Location = new Point(margin, y + 4);
             _title.MaximumSize = new Size(Math.Max(180, contentWidth - 68), 0);
@@ -234,7 +359,7 @@ internal sealed class InstallerForm : Form
         }
     }
 
-    private static async Task InstallAsync(IProgress<InstallProgress> progress)
+    private static async Task InstallAsync(IProgress<InstallProgress> progress, string language)
     {
         Directory.CreateDirectory(AppPaths.InstallDirectory);
         Directory.CreateDirectory(AppPaths.OfficialDirectory);
@@ -322,7 +447,9 @@ internal sealed class InstallerForm : Form
             string startMenu = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.StartMenu), "Programs", "GeoCoin-Start");
             Directory.CreateDirectory(startMenu);
             TryCreateShortcut(installedExe, Path.Combine(startMenu, "GeoCoin-Start.lnk"));
-            TryCreateShortcut(installedExe, Path.Combine(startMenu, "Удалить GeoCoin-Start.lnk"), "--uninstall");
+            string uninstallerName = language == "ru" ? "Удалить GeoCoin-Start" : UiLocalization.TranslateFromEnglish(language, "Uninstall GeoCoin-Start");
+            string shortcutDescription = language == "ru" ? "Простой интерфейс GeoCoin" : UiLocalization.TranslateFromEnglish(language, "Simple GeoCoin interface");
+            TryCreateShortcut(installedExe, Path.Combine(startMenu, uninstallerName + ".lnk"), "--uninstall", shortcutDescription);
             progress.Report(new InstallProgress(100, "Установка завершена."));
         }
         finally
@@ -344,7 +471,7 @@ internal sealed class InstallerForm : Form
         key.SetValue("NoRepair", 1, Microsoft.Win32.RegistryValueKind.DWord);
     }
 
-    private static void TryCreateShortcut(string target, string shortcutPath, string? arguments = null)
+    private static void TryCreateShortcut(string target, string shortcutPath, string? arguments = null, string? description = null)
     {
         object? shell = null;
         object? shortcut = null;
@@ -360,7 +487,7 @@ internal sealed class InstallerForm : Form
             link.TargetPath = target;
             link.Arguments = arguments ?? "";
             link.WorkingDirectory = AppPaths.InstallDirectory;
-            link.Description = "Простой интерфейс GeoCoin";
+            link.Description = description ?? "Простой интерфейс GeoCoin";
             link.Save();
         }
         catch { }

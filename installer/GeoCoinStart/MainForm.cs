@@ -55,12 +55,6 @@ internal sealed class MainForm : Form
     private Color Success => _darkTheme ? Color.FromArgb(118, 194, 133) : Color.FromArgb(53, 119, 74);
     private Color Error => _darkTheme ? Color.FromArgb(240, 137, 116) : Color.FromArgb(161, 70, 53);
 
-    private sealed class UiPreferences
-    {
-        public string Language { get; set; } = "ru";
-        public bool DarkTheme { get; set; }
-    }
-
     private static readonly Dictionary<string, string> RussianToEnglish = new(StringComparer.Ordinal)
     {
         ["GeoCoin-Start — простой кошелёк"] = "GeoCoin-Start — simple wallet",
@@ -313,7 +307,8 @@ internal sealed class MainForm : Form
     private bool _allowClose;
     private bool _closePromptOpen;
     private bool _darkTheme;
-    private bool _englishUi;
+    private string _uiLanguage = "ru";
+    private bool _englishUi => _uiLanguage == "en";
     private bool _refreshingSendFee;
     private int _lastPageViewportWidth;
     private int _selectedThreads = Math.Max(1, Environment.ProcessorCount / 2);
@@ -558,17 +553,18 @@ internal sealed class MainForm : Form
         });
 
         _languageCombo.DropDownStyle = ComboBoxStyle.DropDownList;
-        _languageCombo.Items.AddRange(new object[] { "Русский", "English" });
-        _languageCombo.SelectedIndex = _englishUi ? 1 : 0;
+        _languageCombo.Items.AddRange(UiLocalization.LanguageNames.Cast<object>().ToArray());
+        _languageCombo.SelectedIndex = Math.Max(0, Array.IndexOf(UiLocalization.LanguageCodes, _uiLanguage));
         _languageCombo.Font = new Font("Segoe UI", 9);
         _languageCombo.Size = UiSize(112, 28);
         _languageCombo.Location = UiPoint(0, 8);
         _headerPanel.Controls.Add(_languageCombo);
         _languageCombo.SelectedIndexChanged += (_, _) =>
         {
-            bool english = _languageCombo.SelectedIndex == 1;
-            if (_englishUi == english) return;
-            _englishUi = english;
+            if (_languageCombo.SelectedIndex < 0) return;
+            string language = UiLocalization.LanguageCodes[_languageCombo.SelectedIndex];
+            if (_uiLanguage == language) return;
+            _uiLanguage = language;
             SaveUiPreferences();
             BuildPage();
             ApplyUiLanguage(this);
@@ -721,7 +717,7 @@ internal sealed class MainForm : Form
 
         Panel balanceCard = AddCard(22, 72, cardWidth, 162);
         AddLabel(balanceCard, "БАЛАНС КОШЕЛЬКА", 24, 20, 250, 20, Muted, 9, bold: true);
-        _balanceValue.Text = _nodeProcess is null ? "— GC" : $"{_balance.ToString("0.########", CultureInfo.InvariantCulture)} GC";
+        _balanceValue.Text = _nodeProcess is null ? "— GC" : FormatGcAmount(_balance);
         _balanceValue.Location = UiPoint(22, 49);
         _balanceValue.AutoSize = true;
         _balanceValue.Font = new Font("Segoe UI Semibold", 30, FontStyle.Bold);
@@ -1088,7 +1084,7 @@ internal sealed class MainForm : Form
         string runTime = "";
         if (_nodeProcess is { } process && IsNodeProcessRunning())
         {
-            try { runTime = $"PID {process.Id} · запущена в {process.StartTime.ToString("HH:mm:ss", CultureInfo.CurrentCulture)}"; }
+            try { runTime = $"PID {process.Id} · запущена в {process.StartTime.ToString("HH:mm:ss", UiLocalization.Culture(_uiLanguage))}"; }
             catch { runTime = $"PID {process.Id}"; }
         }
         _nodeRuntimeStatus.Text = runTime;
@@ -1161,7 +1157,7 @@ internal sealed class MainForm : Form
     {
         if (!IsNodeRunning() || _rpcBindAddress == "127.0.0.1" || string.IsNullOrWhiteSpace(_minerPassword))
         {
-            MessageBox.Show(this, "Для подключения другого ПК сначала запустите ноду с частным IP на странице «Нода». Не публикуйте RPC в интернете.",
+            ShowLocalizedMessage("Для подключения другого ПК сначала запустите ноду с частным IP на странице «Нода». Не публикуйте RPC в интернете.",
                 "Нет удалённого доступа", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
@@ -1170,7 +1166,7 @@ internal sealed class MainForm : Form
                          $"Пароль майнера: {_minerPassword}{Environment.NewLine}" +
                          "Вставьте эти данные в GeoCoin-Start → Подмайнер на другом компьютере.";
         Clipboard.SetText(profile);
-        MessageBox.Show(this, "Данные роли майнера скопированы. Передавайте их только доверенному компьютеру в своей LAN/VPN.",
+        ShowLocalizedMessage("Данные роли майнера скопированы. Передавайте их только доверенному компьютеру в своей LAN/VPN.",
             "Профиль скопирован", MessageBoxButtons.OK, MessageBoxIcon.Information);
     }
 
@@ -1478,13 +1474,13 @@ internal sealed class MainForm : Form
         if (_startingNode) return;
         if (_remoteGpuMining || _startingRemoteGpu)
         {
-            MessageBox.Show(this, "Сначала остановите GPU-подмайнер. В этом режиме приложение подключено к ноде на другом компьютере.",
+            ShowLocalizedMessage("Сначала остановите GPU-подмайнер. В этом режиме приложение подключено к ноде на другом компьютере.",
                 "Сначала остановите подмайнер", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
         if (!File.Exists(AppPaths.NodePath))
         {
-            MessageBox.Show(this, "Файл ноды GeoCoin не найден. Запустите установщик ещё раз.",
+            ShowLocalizedMessage("Файл ноды GeoCoin не найден. Запустите установщик ещё раз.",
                 "GeoCoin-Start", MessageBoxButtons.OK, MessageBoxIcon.Error);
             return;
         }
@@ -1496,31 +1492,30 @@ internal sealed class MainForm : Form
         _minerPassword = minerPassword;
         if (string.IsNullOrWhiteSpace(_minerRpcUsername) || _minerRpcUsername.Contains(':') || _minerRpcUsername.Any(char.IsWhiteSpace))
         {
-            MessageBox.Show(this, "Имя miner RPC должно быть непустым и не содержать пробелов или двоеточия.",
+            ShowLocalizedMessage("Имя miner RPC должно быть непустым и не содержать пробелов или двоеточия.",
                 "Проверьте имя пользователя", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
         if (string.Equals(_minerRpcUsername, "geocoin-start", StringComparison.OrdinalIgnoreCase))
         {
-            MessageBox.Show(this, "Для подмайнера задайте отдельное имя пользователя, отличное от admin RPC.",
+            ShowLocalizedMessage("Для подмайнера задайте отдельное имя пользователя, отличное от admin RPC.",
                 "Имя занято", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
         if (minerPassword.Length < 16 || minerPassword.Contains('\r') || minerPassword.Contains('\n'))
         {
-            MessageBox.Show(this, "Задайте для miner RPC пароль не короче 16 символов без переводов строки.",
+            ShowLocalizedMessage("Задайте для miner RPC пароль не короче 16 символов без переводов строки.",
                 "Проверьте пароль", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
         if (_rpcBindAddress != "127.0.0.1" && !GetPrivateIpv4Addresses().Contains(_rpcBindAddress, StringComparer.Ordinal))
         {
-            MessageBox.Show(this, "Выбранный сетевой адрес больше не активен. Откройте страницу «Нода», выберите актуальный частный IP и запустите снова.",
+            ShowLocalizedMessage("Выбранный сетевой адрес больше не активен. Откройте страницу «Нода», выберите актуальный частный IP и запустите снова.",
                 "Обновите адрес RPC", MessageBoxButtons.OK, MessageBoxIcon.Information);
             _rpcBindAddress = "127.0.0.1";
             return;
         }
-        if (_rpcBindAddress != "127.0.0.1" && MessageBox.Show(this,
-                $"Открыть miner RPC на частном адресе {_rpcBindAddress}:3033?\n\n" +
+        if (_rpcBindAddress != "127.0.0.1" && ShowLocalizedMessage($"Открыть miner RPC на частном адресе {_rpcBindAddress}:3033?\n\n" +
                 "Продолжайте только в доверенной локальной сети или VPN. Ограничьте порт 3033 в брандмауэре и не настраивайте проброс порта из интернета.",
                 "Разрешить подключение подмайнера", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
             return;
@@ -1614,8 +1609,7 @@ internal sealed class MainForm : Form
             await RefreshStateAsync();
             if (!existingWallet && offerWalletCreation)
             {
-                var result = MessageBox.Show(this,
-                    "Нода подключена. Создать новый защищённый кошелёк?\n\n" +
+                var result = ShowLocalizedMessage("Нода подключена. Создать новый защищённый кошелёк?\n\n" +
                     "Если у вас уже есть кошелёк GeoCoin, сначала остановите ноду и восстановите резервную копию. Не создавайте новый поверх старого файла.",
                     "Первый запуск", MessageBoxButtons.YesNo, MessageBoxIcon.Information);
                 if (result == DialogResult.Yes) await CreateWalletAsync();
@@ -1643,7 +1637,7 @@ internal sealed class MainForm : Form
                 _rpcHealthy = false;
             }
             else _nodeStatus = "Нода продолжает работать";
-            MessageBox.Show(this, ex.Message + "\n\nЖурнал: " + AppPaths.LogPath,
+            ShowLocalizedMessage(ex.Message + "\n\nЖурнал: " + AppPaths.LogPath,
                 "Не удалось запустить GeoCoin", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
         finally
@@ -1683,7 +1677,7 @@ internal sealed class MainForm : Form
         catch (Exception ex)
         {
             _nodeStatus = "Нода продолжает работать";
-            MessageBox.Show(this, ex.Message + "\n\nОставьте GeoCoin-Start открытым и попробуйте остановить ноду ещё раз.",
+            ShowLocalizedMessage(ex.Message + "\n\nОставьте GeoCoin-Start открытым и попробуйте остановить ноду ещё раз.",
                 "GeoCoin ещё работает", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
         UpdateStatus();
@@ -1694,7 +1688,7 @@ internal sealed class MainForm : Form
         if (!IsNodeRunning() || _rpc is null) return;
         if (File.Exists(AppPaths.WalletPath))
         {
-            MessageBox.Show(this, "В папке GeoCoin уже есть кошелёк. Он не будет перезаписан.",
+            ShowLocalizedMessage("В папке GeoCoin уже есть кошелёк. Он не будет перезаписан.",
                 "Кошелёк уже существует", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
@@ -1706,15 +1700,14 @@ internal sealed class MainForm : Form
             _lastAddress = result.TryGetProperty("address", out JsonElement address) ? address.GetString() : null;
             ResetWalletHistoryBackfill();
             _receiveMessage.Text = "Кошелёк создан. Сейчас сделайте резервную копию на странице «Обзор».";
-            MessageBox.Show(this,
-                "Кошелёк создан и защищён паролем.\n\n" +
+            ShowLocalizedMessage("Кошелёк создан и защищён паролем.\n\n" +
                 "Сначала сохраните пароль, затем создайте зашифрованную резервную копию. Храните копию отдельно от компьютера.",
                 "Кошелёк готов", MessageBoxButtons.OK, MessageBoxIcon.Information);
             await RefreshStateAsync();
         }
         catch (Exception ex)
         {
-            MessageBox.Show(this, ex.Message, "Не удалось создать кошелёк", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            ShowLocalizedMessage(ex.Message, "Не удалось создать кошелёк", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
     }
 
@@ -1732,19 +1725,19 @@ internal sealed class MainForm : Form
         if (dialog.ShowDialog(this) != DialogResult.OK) return;
         if (File.Exists(dialog.FileName))
         {
-            MessageBox.Show(this, "Выберите новый файл. Существующую резервную копию приложение не перезаписывает.",
+            ShowLocalizedMessage("Выберите новый файл. Существующую резервную копию приложение не перезаписывает.",
                 "Файл уже существует", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
         try
         {
             await _rpc.CallAsync("backupwallet", new[] { dialog.FileName });
-            MessageBox.Show(this, "Копия кошелька сохранена. Храните её отдельно от компьютера; для защищённого файла также сохраните пароль.",
+            ShowLocalizedMessage("Копия кошелька сохранена. Храните её отдельно от компьютера; для защищённого файла также сохраните пароль.",
                 "Копия готова", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
         catch (Exception ex)
         {
-            MessageBox.Show(this, ex.Message, "Не удалось создать копию", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            ShowLocalizedMessage(ex.Message, "Не удалось создать копию", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
     }
 
@@ -1759,15 +1752,14 @@ internal sealed class MainForm : Form
             Multiselect = false
         };
         if (dialog.ShowDialog(this) != DialogResult.OK) return;
-        if (MessageBox.Show(this,
-                "Перед импортом закройте оригинальный клиент GeoCoin, если выбранный кошелёк открыт в нём. Исходный файл останется без изменений.",
+        if (ShowLocalizedMessage("Перед импортом закройте оригинальный клиент GeoCoin, если выбранный кошелёк открыт в нём. Исходный файл останется без изменений.",
                 "Импорт кошелька", MessageBoxButtons.OKCancel, MessageBoxIcon.Information) != DialogResult.OK)
             return;
 
         string sourcePath = Path.GetFullPath(dialog.FileName);
         if (string.Equals(sourcePath, Path.GetFullPath(AppPaths.WalletPath), StringComparison.OrdinalIgnoreCase))
         {
-            MessageBox.Show(this, "Этот файл уже выбран как текущий кошелёк.", "Кошелёк уже открыт",
+            ShowLocalizedMessage("Этот файл уже выбран как текущий кошелёк.", "Кошелёк уже открыт",
                 MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
@@ -1779,8 +1771,7 @@ internal sealed class MainForm : Form
         string? recoveryCopy = null;
         bool stoppedForImport = false;
         bool imported = false;
-        if (replacingWallet && MessageBox.Show(this,
-                "Текущий кошелёк будет заменён. Перед этим GeoCoin-Start создаст его резервную копию и сохранит исходный файл отдельно. Продолжить?",
+        if (replacingWallet && ShowLocalizedMessage("Текущий кошелёк будет заменён. Перед этим GeoCoin-Start создаст его резервную копию и сохранит исходный файл отдельно. Продолжить?",
                 "Импортировать другой кошелёк", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2) != DialogResult.Yes)
             return;
 
@@ -1809,8 +1800,7 @@ internal sealed class MainForm : Form
             imported = true;
             ResetWalletHistoryBackfill();
             await RefreshStateAsync();
-            MessageBox.Show(this,
-                "Кошелёк импортирован и открыт. Исходный файл не изменён. История операций будет синхронизирована с сетью.",
+            ShowLocalizedMessage("Кошелёк импортирован и открыт. Исходный файл не изменён. История операций будет синхронизирована с сетью.",
                 "Кошелёк импортирован", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
         catch (Exception ex)
@@ -1832,14 +1822,12 @@ internal sealed class MainForm : Form
                 }
                 catch (Exception rollbackError)
                 {
-                    MessageBox.Show(this,
-                        "Импорт не завершился. Исходный кошелёк сохранён здесь:\n" + (preservedWallet ?? recoveryCopy ?? "") +
+                    ShowLocalizedMessage("Импорт не завершился. Исходный кошелёк сохранён здесь:\n" + (preservedWallet ?? recoveryCopy ?? "") +
                         "\n\n" + rollbackError.Message,
                         "Проверьте файл кошелька", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 }
             }
-            MessageBox.Show(this,
-                "Не удалось импортировать файл кошелька. Убедитесь, что выбран файл GeoCoin и введён его пароль.\n\n" + ex.Message +
+            ShowLocalizedMessage("Не удалось импортировать файл кошелька. Убедитесь, что выбран файл GeoCoin и введён его пароль.\n\n" + ex.Message +
                 (recoveryCopy is null ? "" : "\n\nРезервная копия прежнего кошелька сохранена: " + recoveryCopy) +
                 (failedImport is null ? "" : "\n\nНеудачная копия сохранена отдельно: " + failedImport),
                 "Ошибка импорта", MessageBoxButtons.OK, MessageBoxIcon.Warning);
@@ -1923,7 +1911,7 @@ internal sealed class MainForm : Form
             _gpuDevicesScanned = true;
             _gpuStatusText = "Не удалось проверить видеокарту.";
             if (_currentPage == "mining" || _currentPage == "subminer")
-                MessageBox.Show(this, ex.Message, "Проверка GPU", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                ShowLocalizedMessage(ex.Message, "Проверка GPU", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
         finally
         {
@@ -1947,14 +1935,14 @@ internal sealed class MainForm : Form
             }
             catch (Exception ex)
             {
-                MessageBox.Show(this, ex.Message, "Не удалось остановить CPU-майнинг", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                ShowLocalizedMessage(ex.Message, "Не удалось остановить CPU-майнинг", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             }
             return;
         }
 
         string warning = $"Запустить майнинг на {(int)_threadCount.Value} потоках процессора?\n\n" +
                          "Это увеличит нагрузку, нагрев и расход электричества. Если GPU-майнинг уже запущен, обе нагрузки будут работать одновременно.";
-        if (MessageBox.Show(this, warning, "Начать майнинг", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
+        if (ShowLocalizedMessage(warning, "Начать майнинг", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
             return;
         try
         {
@@ -1965,7 +1953,7 @@ internal sealed class MainForm : Form
         }
         catch (Exception ex)
         {
-            MessageBox.Show(this, ex.Message, "Не удалось запустить CPU-майнинг", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            ShowLocalizedMessage(ex.Message, "Не удалось запустить CPU-майнинг", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
     }
 
@@ -1989,27 +1977,27 @@ internal sealed class MainForm : Form
     {
         if (_remoteGpuMining)
         {
-            MessageBox.Show(this, "Сейчас GPU-процесс подключён к удалённой ноде. Управляйте им на странице «Подмайнер».",
+            ShowLocalizedMessage("Сейчас GPU-процесс подключён к удалённой ноде. Управляйте им на странице «Подмайнер».",
                 "Работает подмайнер", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
         if (!IsNodeRunning() || _rpc is null || _minerPassFile is null || !File.Exists(_minerPassFile)) return;
         if (!File.Exists(AppPaths.GpuMinerPath))
         {
-            MessageBox.Show(this, "GPU-майнер не найден. Переустановите GeoCoin-Start, чтобы получить официальный пакет целиком.",
+            ShowLocalizedMessage("GPU-майнер не найден. Переустановите GeoCoin-Start, чтобы получить официальный пакет целиком.",
                 "GPU-майнинг недоступен", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
         if (_gpuDeviceCombo.SelectedItem is not GpuDevice device)
         {
-            MessageBox.Show(this, "Сначала нажмите «Найти» и выберите видеокарту.",
+            ShowLocalizedMessage("Сначала нажмите «Найти» и выберите видеокарту.",
                 "Видеокарта не выбрана", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
 
         string warning = $"Начать майнинг на видеокарте «{device.Name}»?\n\n" +
                          "Видеокарта будет работать с высокой нагрузкой и может нагреваться. Награда поступит на существующий адрес текущего кошелька.";
-        if (MessageBox.Show(this, warning, "Начать GPU-майнинг", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
+        if (ShowLocalizedMessage(warning, "Начать GPU-майнинг", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
             return;
 
         _gpuLastError = null;
@@ -2083,7 +2071,7 @@ internal sealed class MainForm : Form
         {
             _gpuLastError = ex.Message;
             _gpuStatusText = "Не удалось запустить GPU-майнинг: " + ex.Message;
-            MessageBox.Show(this, ex.Message, "Не удалось запустить GPU-майнинг", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            ShowLocalizedMessage(ex.Message, "Не удалось запустить GPU-майнинг", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
     }
 
@@ -2098,19 +2086,19 @@ internal sealed class MainForm : Form
         }
         if (_gpuMinerProcess is { HasExited: false })
         {
-            MessageBox.Show(this, "GPU-майнер уже запущен. Остановите текущий процесс перед сменой режима.",
+            ShowLocalizedMessage("GPU-майнер уже запущен. Остановите текущий процесс перед сменой режима.",
                 "GPU уже занят", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
         if (IsNodeProcessRunning())
         {
-            MessageBox.Show(this, "Сначала остановите локальную ноду. Подмайнер работает отдельно и подключается к ноде на другом ПК.",
+            ShowLocalizedMessage("Сначала остановите локальную ноду. Подмайнер работает отдельно и подключается к ноде на другом ПК.",
                 "Остановите локальную ноду", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
         if (!File.Exists(AppPaths.GpuMinerPath))
         {
-            MessageBox.Show(this, "Официальный GPU-майнер не найден. Переустановите GeoCoin-Start.",
+            ShowLocalizedMessage("Официальный GPU-майнер не найден. Переустановите GeoCoin-Start.",
                 "GPU-майнинг недоступен", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
@@ -2118,7 +2106,7 @@ internal sealed class MainForm : Form
             endpoint.Scheme != Uri.UriSchemeHttp ||
             !string.IsNullOrEmpty(endpoint.UserInfo))
         {
-            MessageBox.Show(this, "Введите полный адрес RPC-ноды, например http://192.168.1.10:3033/. Не добавляйте имя пользователя или пароль в адрес.",
+            ShowLocalizedMessage("Введите полный адрес RPC-ноды, например http://192.168.1.10:3033/. Не добавляйте имя пользователя или пароль в адрес.",
                 "Проверьте адрес ноды", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
@@ -2127,18 +2115,17 @@ internal sealed class MainForm : Form
         string address = _remoteRewardAddressInput.Text.Trim();
         if (string.IsNullOrWhiteSpace(username) || username.Contains(':') || username.Any(char.IsWhiteSpace) || password.Length < 16 || string.IsNullOrWhiteSpace(address))
         {
-            MessageBox.Show(this, "Укажите имя miner RPC без пробелов, пароль не короче 16 символов и публичный адрес для награды.",
+            ShowLocalizedMessage("Укажите имя miner RPC без пробелов, пароль не короче 16 символов и публичный адрес для награды.",
                 "Заполните данные подмайнера", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
         if (_remoteGpuDeviceCombo.SelectedItem is not GpuDevice device)
         {
-            MessageBox.Show(this, "Нажмите «Найти» и выберите видеокарту.", "Видеокарта не выбрана",
+            ShowLocalizedMessage("Нажмите «Найти» и выберите видеокарту.", "Видеокарта не выбрана",
                 MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
-        if (MessageBox.Show(this,
-                "Подключить видеокарту к удалённой RPC-ноде?\n\n" +
+        if (ShowLocalizedMessage("Подключить видеокарту к удалённой RPC-ноде?\n\n" +
                 "Передача miner RPC-пароля по обычному HTTP не шифруется. Продолжайте только в своей доверенной локальной сети или VPN. Никогда не вводите здесь admin RPC пароль или пароль кошелька.",
                 "Запустить GPU-подмайнер", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
             return;
@@ -2240,7 +2227,7 @@ internal sealed class MainForm : Form
             {
                 try { Directory.Delete(Path.GetDirectoryName(passFile)!, recursive: true); } catch { }
             }
-            MessageBox.Show(this, ex.Message, "Не удалось запустить подмайнер", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            ShowLocalizedMessage(ex.Message, "Не удалось запустить подмайнер", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
         finally
         {
@@ -2741,7 +2728,7 @@ internal sealed class MainForm : Form
         }
         catch (Exception ex)
         {
-            MessageBox.Show(this, ex.Message, "Не удалось создать адрес", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            ShowLocalizedMessage(ex.Message, "Не удалось создать адрес", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
     }
 
@@ -2750,7 +2737,7 @@ internal sealed class MainForm : Form
         string? address = _receiveAddressCombo.SelectedItem as string ?? _lastAddress;
         if (string.IsNullOrWhiteSpace(address))
         {
-            MessageBox.Show(this, "В текущем кошельке пока нет адресов. Создайте новый адрес.", "Адрес ещё не создан",
+            ShowLocalizedMessage("В текущем кошельке пока нет адресов. Создайте новый адрес.", "Адрес ещё не создан",
                 MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
@@ -2764,7 +2751,7 @@ internal sealed class MainForm : Form
         if (_receiveQrCode.Image is not Image qrImage || _receiveAddressCombo.SelectedItem is not string) return;
         using var dialog = new SaveFileDialog
         {
-            Title = _englishUi ? "Save GeoCoin address QR code" : "Сохранить QR-код адреса",
+            Title = TranslateUiText("Сохранить QR-код адреса"),
             FileName = "GeoCoin-address.png",
             Filter = "Изображение PNG (*.png)|*.png",
             AddExtension = true,
@@ -2791,8 +2778,15 @@ internal sealed class MainForm : Form
     {
         using var dialog = new OpenFileDialog
         {
-            Title = _englishUi ? "Choose an image containing a GeoCoin QR code" : "Выберите изображение с QR-кодом GeoCoin",
-            Filter = "Изображения (*.png;*.jpg;*.jpeg;*.bmp;*.gif)|*.png;*.jpg;*.jpeg;*.bmp;*.gif|Все файлы (*.*)|*.*",
+            Title = TranslateUiText("Выберите изображение с QR-кодом GeoCoin"),
+            Filter = _uiLanguage switch
+            {
+                "en" => "Images (*.png;*.jpg;*.jpeg;*.bmp;*.gif)|*.png;*.jpg;*.jpeg;*.bmp;*.gif|All files (*.*)|*.*",
+                "zh-CN" => "图像 (*.png;*.jpg;*.jpeg;*.bmp;*.gif)|*.png;*.jpg;*.jpeg;*.bmp;*.gif|所有文件 (*.*)|*.*",
+                "pt-BR" => "Imagens (*.png;*.jpg;*.jpeg;*.bmp;*.gif)|*.png;*.jpg;*.jpeg;*.bmp;*.gif|Todos os arquivos (*.*)|*.*",
+                "it" => "Immagini (*.png;*.jpg;*.jpeg;*.bmp;*.gif)|*.png;*.jpg;*.jpeg;*.bmp;*.gif|Tutti i file (*.*)|*.*",
+                _ => "Изображения (*.png;*.jpg;*.jpeg;*.bmp;*.gif)|*.png;*.jpg;*.jpeg;*.bmp;*.gif|Все файлы (*.*)|*.*"
+            },
             CheckFileExists = true,
             Multiselect = false
         };
@@ -2855,7 +2849,7 @@ internal sealed class MainForm : Form
                 string normalizedAmount = amountText.Trim().Replace(',', '.');
                 if (decimal.TryParse(normalizedAmount, NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out decimal amount) &&
                     amount > 0 && decimal.Round(amount, 8) == amount)
-                    _sendAmount.Text = amount.ToString("0.########", CultureInfo.InvariantCulture);
+                    _sendAmount.Text = amount.ToString("0.########", UiLocalization.Culture(_uiLanguage));
             }
             _sendMessage.Text = "Адрес загружен из QR-кода. Перед отправкой проверьте адрес и сумму.";
             _sendMessage.ForeColor = Success;
@@ -2994,7 +2988,7 @@ internal sealed class MainForm : Form
                 };
                 string date = FormatTransactionTime(entry);
                 int rowIndex = grid.Rows.Add(date, operation, FormatGcAmount(amount, includePositiveSign: true),
-                    fee == 0 ? "—" : Math.Abs(fee).ToString("0.########", CultureInfo.CurrentCulture) + " GC", status, address);
+                    fee == 0 ? "—" : Math.Abs(fee).ToString("0.########", UiLocalization.Culture(_uiLanguage)) + " GC", status, address);
                 DataGridViewRow row = grid.Rows[rowIndex];
                 row.Tag = txid;
                 row.Cells[5].ToolTipText = address;
@@ -3122,8 +3116,7 @@ internal sealed class MainForm : Form
             _walletKeyStatus.Text = "Проверьте ключ: нужно ровно 64 шестнадцатеричных символа 0–9, A–F.";
             return;
         }
-        if (MessageBox.Show(this,
-                "Этот ключ будет добавлен в текущий кошелёк. Импорт восстановит историю адреса и может занять время. Продолжить?",
+        if (ShowLocalizedMessage("Этот ключ будет добавлен в текущий кошелёк. Импорт восстановит историю адреса и может занять время. Продолжить?",
                 "Импорт приватного ключа", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
             return;
         string? password = PasswordDialog.AskForAction(this, "импортировать приватный ключ");
@@ -3160,8 +3153,7 @@ internal sealed class MainForm : Form
     private async Task ExportPrivateKeyAsync()
     {
         if (!IsNodeRunning() || _rpc is null || _walletAddressCombo.SelectedItem is not string address) return;
-        if (MessageBox.Show(this,
-                "Ключ даёт полный контроль над монетами этого адреса. Он будет записан в незашифрованный текстовый файл. Любой, кто получит файл, сможет потратить эти монеты. Продолжить?",
+        if (ShowLocalizedMessage("Ключ даёт полный контроль над монетами этого адреса. Он будет записан в незашифрованный текстовый файл. Любой, кто получит файл, сможет потратить эти монеты. Продолжить?",
                 "Экспорт секретного ключа", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
             return;
         using var dialog = new SaveFileDialog
@@ -3175,7 +3167,7 @@ internal sealed class MainForm : Form
         if (dialog.ShowDialog(this) != DialogResult.OK) return;
         if (File.Exists(dialog.FileName))
         {
-            MessageBox.Show(this, "Выберите новый файл. Экспорт приватного ключа не перезаписывает существующие файлы.",
+            ShowLocalizedMessage("Выберите новый файл. Экспорт приватного ключа не перезаписывает существующие файлы.",
                 "Файл уже существует", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
@@ -3192,7 +3184,7 @@ internal sealed class MainForm : Form
                 throw new InvalidOperationException("Оригинальная нода вернула ключ в неожиданном формате.");
             await File.WriteAllTextAsync(dialog.FileName, privateKey + Environment.NewLine, new UTF8Encoding(false));
             _walletKeyStatus.Text = "Ключ сохранён в выбранный файл. Храните его отдельно и никому не передавайте.";
-            MessageBox.Show(this, "Приватный ключ сохранён. Он открывает только выбранный адрес; файл не зашифрован.",
+            ShowLocalizedMessage("Приватный ключ сохранён. Он открывает только выбранный адрес; файл не зашифрован.",
                 "Экспорт завершён", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
         catch (Exception ex)
@@ -3231,17 +3223,32 @@ internal sealed class MainForm : Form
     }
 
     private string FormatSendFeeAmount(decimal amount)
-        => _englishUi ? amount.ToString("0.########", CultureInfo.InvariantCulture) : FormatGcAmount(amount);
+        => amount.ToString("0.########", UiLocalization.Culture(_uiLanguage));
 
     private string FormatSendFeeEstimate(FeeEstimate estimate)
     {
         string approximate = FormatSendFeeAmount(estimate.ApproximateGc);
         string minimum = FormatSendFeeAmount(estimate.MinimumGc);
         string rate = FormatSendFeeAmount(estimate.RateGcPerKb);
-        if (_englishUi)
+        if (_uiLanguage == "en")
         {
             _sendFeeHint.Text = $"Minimum {minimum} GC · rate {rate} GC/kB · typical transaction about {estimate.AssumedBytes} bytes.";
             return $"Estimated fee: about {approximate} GC";
+        }
+        if (_uiLanguage == "zh-CN")
+        {
+            _sendFeeHint.Text = $"最低 {minimum} GC · 费率 {rate} GC/千字节 · 按约 {estimate.AssumedBytes} 字节的普通交易估算。";
+            return $"预计手续费：约 {approximate} GC";
+        }
+        if (_uiLanguage == "pt-BR")
+        {
+            _sendFeeHint.Text = $"Mínimo {minimum} GC · taxa {rate} GC/kB · transação típica de cerca de {estimate.AssumedBytes} bytes.";
+            return $"Taxa estimada: cerca de {approximate} GC";
+        }
+        if (_uiLanguage == "it")
+        {
+            _sendFeeHint.Text = $"Minimo {minimum} GC · tariffa {rate} GC/kB · transazione tipica di circa {estimate.AssumedBytes} byte.";
+            return $"Commissione stimata: circa {approximate} GC";
         }
         _sendFeeHint.Text = $"Минимум {minimum} GC · ставка {rate} GC/кБ · обычная транзакция около {estimate.AssumedBytes} байт.";
         return $"Ориентировочная комиссия: {approximate} GC";
@@ -3321,18 +3328,32 @@ internal sealed class MainForm : Form
             return;
         }
 
-        string amountForReview = amount.ToString("0.########", _englishUi ? CultureInfo.InvariantCulture : CultureInfo.CurrentCulture);
-        string review = _englishUi
-            ? $"Send {amountForReview} GC?\n\nRecipient:\n{address}\n\n" +
-              $"Fee: about {FormatSendFeeAmount(feeEstimate.ApproximateGc)} GC\n" +
-              $"Minimum: {FormatSendFeeAmount(feeEstimate.MinimumGc)} GC. This estimate assumes a typical {feeEstimate.AssumedBytes}-byte transaction; the final fee depends on the selected inputs and may be higher.\n\n" +
-              "A confirmed transfer cannot be canceled."
-            : $"Отправить {amountForReview} GC?\n\nПолучатель:\n{address}\n\n" +
-              $"Комиссия: примерно {FormatSendFeeAmount(feeEstimate.ApproximateGc)} GC\n" +
-              $"Минимум: {FormatSendFeeAmount(feeEstimate.MinimumGc)} GC. Расчёт сделан для обычной транзакции около {feeEstimate.AssumedBytes} байт; точная сумма зависит от выбранных входов и может быть выше.\n\n" +
-              "После подтверждения перевод нельзя отменить.";
-        string reviewTitle = _englishUi ? "Review transfer" : "Проверьте перевод";
-        if (MessageBox.Show(this, review, reviewTitle, MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
+        string amountForReview = amount.ToString("0.########", UiLocalization.Culture(_uiLanguage));
+        string review = _uiLanguage switch
+        {
+            "en" => $"Send {amountForReview} GC?\n\nRecipient:\n{address}\n\n" +
+                    $"Fee: about {FormatSendFeeAmount(feeEstimate.ApproximateGc)} GC\n" +
+                    $"Minimum: {FormatSendFeeAmount(feeEstimate.MinimumGc)} GC. This estimate assumes a typical {feeEstimate.AssumedBytes}-byte transaction; the final fee depends on the selected inputs and may be higher.\n\n" +
+                    "A confirmed transfer cannot be canceled.",
+            "zh-CN" => $"发送 {amountForReview} GC？\n\n收款地址：\n{address}\n\n" +
+                       $"手续费：约 {FormatSendFeeAmount(feeEstimate.ApproximateGc)} GC\n" +
+                       $"最低：{FormatSendFeeAmount(feeEstimate.MinimumGc)} GC。估算按约 {feeEstimate.AssumedBytes} 字节的普通交易计算；实际费用取决于所选输入，可能更高。\n\n" +
+                       "确认后的转账无法撤销。",
+            "pt-BR" => $"Enviar {amountForReview} GC?\n\nDestinatário:\n{address}\n\n" +
+                       $"Taxa: cerca de {FormatSendFeeAmount(feeEstimate.ApproximateGc)} GC\n" +
+                       $"Mínimo: {FormatSendFeeAmount(feeEstimate.MinimumGc)} GC. A estimativa considera uma transação típica de {feeEstimate.AssumedBytes} bytes; a taxa final depende das entradas selecionadas e pode ser maior.\n\n" +
+                       "Uma transferência confirmada não pode ser cancelada.",
+            "it" => $"Inviare {amountForReview} GC?\n\nDestinatario:\n{address}\n\n" +
+                    $"Commissione: circa {FormatSendFeeAmount(feeEstimate.ApproximateGc)} GC\n" +
+                    $"Minimo: {FormatSendFeeAmount(feeEstimate.MinimumGc)} GC. La stima considera una transazione tipica di {feeEstimate.AssumedBytes} byte; la commissione finale dipende dagli input selezionati e potrebbe essere maggiore.\n\n" +
+                    "Una transazione confermata non può essere annullata.",
+            _ => $"Отправить {amountForReview} GC?\n\nПолучатель:\n{address}\n\n" +
+                 $"Комиссия: примерно {FormatSendFeeAmount(feeEstimate.ApproximateGc)} GC\n" +
+                 $"Минимум: {FormatSendFeeAmount(feeEstimate.MinimumGc)} GC. Расчёт сделан для обычной транзакции около {feeEstimate.AssumedBytes} байт; точная сумма зависит от выбранных входов и может быть выше.\n\n" +
+                 "После подтверждения перевод нельзя отменить."
+        };
+        string reviewTitle = _uiLanguage switch { "en" => "Review transfer", "zh-CN" => "确认转账", "pt-BR" => "Revise a transferência", "it" => "Conferma il trasferimento", _ => "Проверьте перевод" };
+        if (ShowLocalizedMessage(review, reviewTitle, MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
             return;
 
         _sendButton.Enabled = false;
@@ -3443,7 +3464,7 @@ internal sealed class MainForm : Form
             if (_currentPage == "overview")
             {
                 _balanceValue.Text = File.Exists(AppPaths.WalletPath)
-                    ? $"{_balance.ToString("0.########", CultureInfo.InvariantCulture)} GC"
+                    ? FormatGcAmount(_balance)
                     : "Кошелёк ещё не создан";
                 _nodeState.Text = _nodeStatus;
                 _syncState.Text = SyncDescription();
@@ -3588,7 +3609,7 @@ internal sealed class MainForm : Form
         if (_startingNode || _startingRemoteGpu)
         {
             e.Cancel = true;
-            MessageBox.Show(this, "Дождитесь завершения запуска узла или подмайнера, затем повторите выход.",
+            ShowLocalizedMessage("Дождитесь завершения запуска узла или подмайнера, затем повторите выход.",
                 "Выполняется запуск", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
@@ -3597,7 +3618,7 @@ internal sealed class MainForm : Form
         e.Cancel = true;
         if (_closePromptOpen) return;
         _closePromptOpen = true;
-        var result = MessageBox.Show(this, gpuRunning && !IsNodeRunning()
+        var result = ShowLocalizedMessage(gpuRunning && !IsNodeRunning()
                 ? "Перед выходом остановить GPU-подмайнер?"
                 : "Перед выходом остановить ноду GeoCoin и запущенный GPU-майнер?",
             "Закрытие GeoCoin-Start",
@@ -3659,18 +3680,18 @@ internal sealed class MainForm : Form
         return 0;
     }
 
-    private static string FormatGcAmount(decimal amount, bool includePositiveSign = false)
+    private string FormatGcAmount(decimal amount, bool includePositiveSign = false)
     {
         string prefix = includePositiveSign && amount > 0 ? "+" : "";
-        return prefix + amount.ToString("0.########", CultureInfo.CurrentCulture) + " GC";
+        return prefix + amount.ToString("0.########", UiLocalization.Culture(_uiLanguage)) + " GC";
     }
 
-    private static string FormatTransactionTime(JsonElement entry)
+    private string FormatTransactionTime(JsonElement entry)
     {
         long timestamp = ReadInt64(entry, "time");
         if (timestamp <= 0) timestamp = ReadInt64(entry, "timereceived");
         if (timestamp <= 0) return "—";
-        try { return DateTimeOffset.FromUnixTimeSeconds(timestamp).ToLocalTime().ToString("dd.MM.yyyy HH:mm"); }
+        try { return DateTimeOffset.FromUnixTimeSeconds(timestamp).ToLocalTime().ToString("g", UiLocalization.Culture(_uiLanguage)); }
         catch (ArgumentOutOfRangeException) { return "—"; }
     }
 
@@ -3683,7 +3704,7 @@ internal sealed class MainForm : Form
         return 0;
     }
 
-    private static string FormatHashrate(double value)
+    private string FormatHashrate(double value)
     {
         string[] units = { "хеш/с", "кХеш/с", "МХеш/с", "ГХеш/с", "ТХеш/с", "ПХеш/с" };
         int unit = 0;
@@ -3692,7 +3713,7 @@ internal sealed class MainForm : Form
             value /= 1000;
             unit++;
         }
-        return value.ToString(value >= 100 ? "0" : value >= 10 ? "0.0" : "0.00", CultureInfo.CurrentCulture) + " " + units[unit];
+        return value.ToString(value >= 100 ? "0" : value >= 10 ? "0.0" : "0.00", UiLocalization.Culture(_uiLanguage)) + " " + units[unit];
     }
 
     private Panel AddCard(int x, int y, int width, int height)
@@ -3774,12 +3795,12 @@ internal sealed class MainForm : Form
         {
             if (!File.Exists(AppPaths.UiSettingsPath)) return;
             UiPreferences? settings = JsonSerializer.Deserialize<UiPreferences>(File.ReadAllText(AppPaths.UiSettingsPath));
-            _englishUi = string.Equals(settings?.Language, "en", StringComparison.OrdinalIgnoreCase);
+            _uiLanguage = UiLocalization.NormalizeLanguage(settings?.Language);
             _darkTheme = settings?.DarkTheme ?? false;
         }
         catch
         {
-            _englishUi = false;
+            _uiLanguage = "ru";
             _darkTheme = false;
         }
     }
@@ -3791,7 +3812,7 @@ internal sealed class MainForm : Form
             Directory.CreateDirectory(AppPaths.DataRoot);
             string json = JsonSerializer.Serialize(new UiPreferences
             {
-                Language = _englishUi ? "en" : "ru",
+                Language = _uiLanguage,
                 DarkTheme = _darkTheme
             });
             File.WriteAllText(AppPaths.UiSettingsPath, json, new UTF8Encoding(false));
@@ -3805,18 +3826,38 @@ internal sealed class MainForm : Form
     private void UpdatePreferenceControlText()
     {
         _themeButton.Text = _darkTheme ? "Светлая тема" : "Тёмная тема";
-        _languageCombo.SelectedIndex = _englishUi ? 1 : 0;
+        int selectedIndex = Array.IndexOf(UiLocalization.LanguageCodes, _uiLanguage);
+        _languageCombo.SelectedIndex = selectedIndex >= 0 ? selectedIndex : 0;
     }
+
+    private DialogResult ShowLocalizedMessage(string message, string caption, MessageBoxButtons buttons, MessageBoxIcon icon,
+        MessageBoxDefaultButton defaultButton = MessageBoxDefaultButton.Button1)
+        => MessageBox.Show(this, TranslateUiText(message), TranslateUiText(caption), buttons, icon, defaultButton);
 
     private string TranslateUiText(string value)
     {
-        if (_englishUi)
+        string english = NormalizeUiTextToEnglish(value);
+        if (_uiLanguage == "en") return english;
+        if (_uiLanguage == "ru")
         {
-            if (RussianToEnglish.TryGetValue(value, out string? translated)) return translated;
-            return TranslateCommonPrefixes(value, english: true);
+            if (EnglishToRussian.TryGetValue(english, out string? russian)) return russian;
+            if (UiLocalization.TryNormalizeEnglishToRussian(english, out russian)) return russian;
+            return TranslateCommonPrefixes(english, english: false);
         }
-        if (EnglishToRussian.TryGetValue(value, out string? russian)) return russian;
-        return TranslateCommonPrefixes(value, english: false);
+        return UiLocalization.TranslateFromEnglish(_uiLanguage, english);
+    }
+
+    private string NormalizeUiTextToEnglish(string value)
+    {
+        if (RussianToEnglish.TryGetValue(value, out string? english)) return english;
+        english = TranslateCommonPrefixes(value, english: true);
+        if (!string.Equals(english, value, StringComparison.Ordinal)) return english;
+        if (UiLocalization.TryNormalizeRussianToEnglish(value, out english)) return english;
+        foreach (string language in UiLocalization.LanguageCodes.Skip(2))
+            if (UiLocalization.TryNormalizeToEnglish(language, value, out english)) return english;
+        if (EnglishToRussian.TryGetValue(value, out string? russian) && RussianToEnglish.TryGetValue(russian, out english))
+            return english;
+        return value;
     }
 
     private static string TranslateCommonPrefixes(string value, bool english)
