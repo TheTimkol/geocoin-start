@@ -15,6 +15,10 @@ internal sealed class MainForm : Form
         public override string ToString() => $"{Name} — {Backend.ToUpperInvariant()} · {Id}";
     }
 
+    private sealed record MinedBlockRecord(string BlockId, string TransactionId, long Timestamp, string Source);
+    private sealed record MinedBlockLedger(List<MinedBlockRecord> Blocks, long? SessionStartedAtUnix,
+        long? SessionEndedAtUnix, List<string> SessionBlockIds);
+
     private static readonly Color Canvas = Color.FromArgb(241, 241, 235);
     private static readonly Color Ink = Color.FromArgb(31, 39, 34);
     private static readonly Color Muted = Color.FromArgb(104, 115, 105);
@@ -43,6 +47,8 @@ internal sealed class MainForm : Form
     private readonly Label _nodeRuntimeStatus = new();
     private readonly Label _nodePeerStatus = new();
     private readonly Label _nodeProfileHint = new();
+    private readonly Label _minedBlocksTodayLabel = new();
+    private readonly Label _minedBlocksSessionLabel = new();
     private readonly TextBox _nodeLogBox = new();
     private readonly NumericUpDown _threadCount = new();
     private readonly ComboBox _gpuDeviceCombo = new();
@@ -85,6 +91,9 @@ internal sealed class MainForm : Form
     private readonly Button _receiveButton = new();
     private readonly Button[] _navigation = new Button[8];
     private readonly System.Windows.Forms.Timer _refreshTimer = new() { Interval = 4000 };
+    private readonly object _minedBlocksLock = new();
+    private readonly List<MinedBlockRecord> _minedBlockRecords = new();
+    private readonly HashSet<string> _miningSessionBlockIds = new(StringComparer.OrdinalIgnoreCase);
 
     private GeoCoinRpcClient? _rpc;
     private GeoCoinRpcClient? _minerRpc;
@@ -112,6 +121,10 @@ internal sealed class MainForm : Form
     private bool _startingNode;
     private bool _startingRemoteGpu;
     private bool _rpcHealthy;
+    private bool _miningSessionActive;
+    private DateTimeOffset? _miningSessionStartedAt;
+    private DateTimeOffset? _miningSessionEndedAt;
+    private DateTimeOffset _lastWalletMiningStatsPollUtc = DateTimeOffset.MinValue;
     private bool _checkingGpuDevices;
     private bool _gpuDevicesScanned;
     private bool _loadingTransactions;
@@ -142,6 +155,7 @@ internal sealed class MainForm : Form
         Font = new Font("Segoe UI", 10);
         FormClosing += HandleClosing;
 
+        LoadMinedBlockRecords();
         BuildShell();
         _nodeButton.Click += async (_, _) =>
         {
@@ -201,6 +215,7 @@ internal sealed class MainForm : Form
         {
             await RefreshStateAsync();
             if (_currentPage == "node") UpdateNodePage();
+            UpdateMinedBlockCounters();
         };
         _refreshTimer.Start();
         Shown += (_, _) => FitWindowToScreen();
@@ -518,7 +533,19 @@ internal sealed class MainForm : Form
     {
         int cardWidth = PageCardWidth(700);
         AddParagraph("CPU и GPU настраиваются в одном окне. Их можно запускать по отдельности или одновременно.", 22, 12, cardWidth, 44);
-        Panel card = AddCard(22, 68, cardWidth, 500);
+        Panel blockStats = AddCard(22, 68, cardWidth, 74);
+        AddLabel(blockStats, "ДОБЫТЫЕ БЛОКИ", 22, 11, 240, 18, Muted, 8.5f, bold: true);
+        _minedBlocksTodayLabel.Location = UiPoint(22, 36);
+        _minedBlocksTodayLabel.Size = UiSize(Math.Max(220, cardWidth / 2 - 30), 24);
+        _minedBlocksTodayLabel.Font = new Font("Segoe UI Semibold", 10, FontStyle.Bold);
+        _minedBlocksTodayLabel.ForeColor = Ink;
+        blockStats.Controls.Add(_minedBlocksTodayLabel);
+        _minedBlocksSessionLabel.Location = UiPoint(Math.Max(250, cardWidth / 2), 36);
+        _minedBlocksSessionLabel.Size = UiSize(Math.Max(220, cardWidth / 2 - 30), 24);
+        _minedBlocksSessionLabel.Font = new Font("Segoe UI Semibold", 10, FontStyle.Bold);
+        _minedBlocksSessionLabel.ForeColor = Ink;
+        blockStats.Controls.Add(_minedBlocksSessionLabel);
+        Panel card = AddCard(22, 154, cardWidth, 500);
 
         AddLabel(card, "Майнинг на процессоре · CPU", 24, 18, cardWidth - 48, 24, Ink, 13, bold: true);
         AddLabel(card, "Потоки", 24, 52, 100, 22, Muted, 10, bold: true);
@@ -604,8 +631,9 @@ internal sealed class MainForm : Form
             (_gpuMiningActive || _gpuDeviceCombo.SelectedItem is GpuDevice));
         card.Controls.Add(_gpuMineButton);
 
-        if (!IsNodeRunning()) AddParagraph("Сначала запустите ноду на странице «Обзор».", 24, 586, cardWidth - 48, 32);
-        else if (!File.Exists(AppPaths.WalletPath)) AddParagraph("Сначала создайте или импортируйте кошелёк на странице «Обзор».", 24, 586, cardWidth - 48, 32);
+        if (!IsNodeRunning()) AddParagraph("Сначала запустите ноду на странице «Обзор».", 24, 674, cardWidth - 48, 32);
+        else if (!File.Exists(AppPaths.WalletPath)) AddParagraph("Сначала создайте или импортируйте кошелёк на странице «Обзор».", 24, 674, cardWidth - 48, 32);
+        UpdateMinedBlockCounters();
     }
 
     private void BuildNodePage()
@@ -705,7 +733,19 @@ internal sealed class MainForm : Form
         int cardWidth = PageCardWidth(800);
         AddParagraph("Этот компьютер будет работать как GPU-подмайнер и подключится к уже запущенной ноде на другом ПК. Локальную ноду запускать не нужно.",
             22, 12, cardWidth, 48);
-        Panel card = AddCard(22, 70, cardWidth, 476);
+        Panel blockStats = AddCard(22, 70, cardWidth, 74);
+        AddLabel(blockStats, "ДОБЫТЫЕ БЛОКИ", 22, 11, 240, 18, Muted, 8.5f, bold: true);
+        _minedBlocksTodayLabel.Location = UiPoint(22, 36);
+        _minedBlocksTodayLabel.Size = UiSize(Math.Max(220, cardWidth / 2 - 30), 24);
+        _minedBlocksTodayLabel.Font = new Font("Segoe UI Semibold", 10, FontStyle.Bold);
+        _minedBlocksTodayLabel.ForeColor = Ink;
+        blockStats.Controls.Add(_minedBlocksTodayLabel);
+        _minedBlocksSessionLabel.Location = UiPoint(Math.Max(250, cardWidth / 2), 36);
+        _minedBlocksSessionLabel.Size = UiSize(Math.Max(220, cardWidth / 2 - 30), 24);
+        _minedBlocksSessionLabel.Font = new Font("Segoe UI Semibold", 10, FontStyle.Bold);
+        _minedBlocksSessionLabel.ForeColor = Ink;
+        blockStats.Controls.Add(_minedBlocksSessionLabel);
+        Panel card = AddCard(22, 156, cardWidth, 476);
         AddLabel(card, "ПОДКЛЮЧЕНИЕ К НОДЕ", 22, 16, cardWidth - 44, 20, Muted, 9, bold: true);
         AddLabel(card, "Адрес RPC-ноды", 22, 48, 230, 20, Ink, 10, bold: true);
         StyleTextBox(_remoteNodeUrlInput, new Point(22, 72), new Size(Math.Min(470, cardWidth - 44), 34));
@@ -758,7 +798,8 @@ internal sealed class MainForm : Form
             _gpuMinerProcess is null && _remoteGpuDeviceCombo.SelectedItem is GpuDevice);
         card.Controls.Add(_remoteGpuButton);
         AddParagraph("На узле нужен miner RPC-пользователь и пароль; admin RPC и пароль кошелька сюда не вводите. Подключайтесь только по доверенной LAN/VPN: RPC не шифрует пароль при передаче.",
-            22, 554, cardWidth, 54);
+            22, 650, cardWidth, 54);
+        UpdateMinedBlockCounters();
     }
 
     private void RpcBindComboSelectedIndexChanged(object? sender, EventArgs e)
@@ -1545,6 +1586,7 @@ internal sealed class MainForm : Form
                 await _rpc.CallAsync("setgenerate", new object[] { false });
                 _cpuMiningActive = false;
                 _cpuHashrateValue = 0;
+                UpdateMiningSessionState();
                 BuildPage();
             }
             catch (Exception ex)
@@ -1562,6 +1604,7 @@ internal sealed class MainForm : Form
         {
             await _rpc.CallAsync("setgenerate", new object[] { true, (int)_threadCount.Value });
             _cpuMiningActive = true;
+            UpdateMiningSessionState();
             BuildPage();
         }
         catch (Exception ex)
@@ -1638,7 +1681,7 @@ internal sealed class MainForm : Form
             start.ArgumentList.Add("--stats-json");
 
             var miner = new Process { StartInfo = start, EnableRaisingEvents = true };
-            miner.OutputDataReceived += (_, e) => HandleGpuMinerLine(e.Data);
+            miner.OutputDataReceived += (_, e) => HandleGpuMinerLine(e.Data, remote: false);
             miner.ErrorDataReceived += (_, e) => WriteNodeLog("[GPU] " + e.Data);
             miner.Exited += (_, _) =>
             {
@@ -1651,6 +1694,7 @@ internal sealed class MainForm : Form
                         _gpuMinerProcess = null;
                         _gpuMiningActive = false;
                         _remoteGpuMining = false;
+                        UpdateMiningSessionState();
                         DeleteRemoteMinerPassFile();
                         _gpuStatusText = "GPU-майнинг завершён.";
                         _gpuHashrateText = "Скорость GPU: —";
@@ -1662,14 +1706,15 @@ internal sealed class MainForm : Form
             };
             if (!miner.Start()) throw new InvalidOperationException("Windows не запустил GPU-майнер.");
             _gpuMinerProcess = miner;
-            miner.BeginOutputReadLine();
-            miner.BeginErrorReadLine();
             if (miner.HasExited)
             {
                 _gpuMinerProcess = null;
                 throw new InvalidOperationException("GPU-майнер завершился сразу после запуска. Проверьте драйвер видеокарты.");
             }
             _gpuMiningActive = true;
+            UpdateMiningSessionState();
+            miner.BeginOutputReadLine();
+            miner.BeginErrorReadLine();
             _lastAddress = address;
             _gpuStatusText = "GPU-майнинг запущен. Ожидаю данные о скорости…";
             _gpuHashrateText = "Скорость GPU: ожидание данных…";
@@ -1768,7 +1813,7 @@ internal sealed class MainForm : Form
             start.ArgumentList.Add("--stats-json");
 
             var miner = new Process { StartInfo = start, EnableRaisingEvents = true };
-            miner.OutputDataReceived += (_, e) => HandleGpuMinerLine(e.Data);
+            miner.OutputDataReceived += (_, e) => HandleGpuMinerLine(e.Data, remote: true);
             miner.ErrorDataReceived += (_, e) => WriteNodeLog("[GPU-подмайнер] " + e.Data);
             miner.Exited += (_, _) =>
             {
@@ -1781,6 +1826,7 @@ internal sealed class MainForm : Form
                         _gpuMinerProcess = null;
                         _gpuMiningActive = false;
                         _remoteGpuMining = false;
+                        UpdateMiningSessionState();
                         DeleteRemoteMinerPassFile();
                         _gpuStatusText = "GPU-подмайнер отключён.";
                         _gpuHashrateText = "Скорость GPU: —";
@@ -1794,8 +1840,6 @@ internal sealed class MainForm : Form
             _gpuMinerProcess = miner;
             _remoteMinerPassFile = passFile;
             passFile = null;
-            miner.BeginOutputReadLine();
-            miner.BeginErrorReadLine();
             if (miner.HasExited)
             {
                 _gpuMinerProcess = null;
@@ -1805,6 +1849,9 @@ internal sealed class MainForm : Form
             }
             _remoteGpuMining = true;
             _gpuMiningActive = true;
+            UpdateMiningSessionState();
+            miner.BeginOutputReadLine();
+            miner.BeginErrorReadLine();
             WriteNodeLog($"[GPU-подмайнер] Подключение к {endpoint.Host}:{endpoint.Port}, устройство {device.Name}, адрес награды {address}.");
             _gpuStatusText = $"Подключаюсь к {endpoint.Host}:{endpoint.Port}…";
             _gpuHashrateText = "Скорость GPU: ожидание данных…";
@@ -1852,7 +1899,7 @@ internal sealed class MainForm : Form
         return _lastAddress;
     }
 
-    private void HandleGpuMinerLine(string? line)
+    private void HandleGpuMinerLine(string? line, bool remote)
     {
         if (string.IsNullOrWhiteSpace(line)) return;
         try
@@ -1860,11 +1907,24 @@ internal sealed class MainForm : Form
             using JsonDocument document = JsonDocument.Parse(line);
             JsonElement root = document.RootElement;
             string eventName = root.TryGetProperty("event", out JsonElement eventValue) ? eventValue.GetString() ?? "" : "";
-            if (eventName == "error")
+            if (eventName == "block_accepted")
+            {
+                string blockId = ReadString(root, "hash");
+                if (string.IsNullOrWhiteSpace(blockId)) blockId = ReadString(root, "blockhash");
+                if (!string.IsNullOrWhiteSpace(blockId))
+                {
+                    long height = ReadInt64(root, "height");
+                    string source = remote ? "remote-gpu" : "local-gpu";
+                    string label = remote ? "GPU-подмайнер" : "GPU";
+                    RegisterMinedBlock(new MinedBlockRecord(blockId, "", DateTimeOffset.UtcNow.ToUnixTimeSeconds(), source));
+                    WriteNodeLog($"[{label}] Нода приняла блок {height:N0}: {blockId}");
+                }
+            }
+            else if (eventName == "error")
             {
                 string message = root.TryGetProperty("message", out JsonElement msg) ? msg.GetString() ?? "Ошибка GPU-майнера" : "Ошибка GPU-майнера";
                 _gpuStatusText = message;
-                WriteNodeLog(($"[{(_remoteGpuMining ? "GPU-подмайнер" : "GPU")}] ") + message);
+                WriteNodeLog(($"[{(remote ? "GPU-подмайнер" : "GPU")}] ") + message);
                 if (!IsDisposed && IsHandleCreated) BeginInvoke((Action)(() =>
                 {
                         if (_currentPage == "mining" || _currentPage == "subminer") _gpuMiningState.Text = message;
@@ -1895,8 +1955,262 @@ internal sealed class MainForm : Form
                 }));
             }
         }
-        catch (JsonException) { WriteNodeLog("[GPU] " + line); }
+        catch (JsonException) { WriteNodeLog(remote ? "[GPU-подмайнер] " + line : "[GPU] " + line); }
         catch (InvalidOperationException) { }
+    }
+
+    private void LoadMinedBlockRecords()
+    {
+        try
+        {
+            if (!File.Exists(AppPaths.MinedBlocksPath)) return;
+            using JsonDocument document = JsonDocument.Parse(File.ReadAllText(AppPaths.MinedBlocksPath, Encoding.UTF8));
+            List<MinedBlockRecord>? records;
+            if (document.RootElement.ValueKind == JsonValueKind.Array)
+            {
+                records = JsonSerializer.Deserialize<List<MinedBlockRecord>>(document.RootElement.GetRawText());
+            }
+            else
+            {
+                MinedBlockLedger? ledger = JsonSerializer.Deserialize<MinedBlockLedger>(document.RootElement.GetRawText());
+                records = ledger?.Blocks;
+                if (ledger?.SessionStartedAtUnix is long sessionStartedAt && sessionStartedAt > 0)
+                    _miningSessionStartedAt = DateTimeOffset.FromUnixTimeSeconds(sessionStartedAt);
+                if (ledger?.SessionEndedAtUnix is long sessionEndedAt && sessionEndedAt > 0)
+                    _miningSessionEndedAt = DateTimeOffset.FromUnixTimeSeconds(sessionEndedAt);
+                else if (_miningSessionStartedAt.HasValue)
+                    _miningSessionEndedAt = DateTimeOffset.Now;
+                if (ledger?.SessionBlockIds is not null)
+                    foreach (string blockId in ledger.SessionBlockIds.Where(id => !string.IsNullOrWhiteSpace(id)))
+                        _miningSessionBlockIds.Add(blockId);
+            }
+            if (records is null) return;
+            long keepAfter = DateTimeOffset.UtcNow.AddDays(-7).ToUnixTimeSeconds();
+            foreach (MinedBlockRecord record in records)
+            {
+                if (string.IsNullOrWhiteSpace(record.BlockId) || record.Timestamp < keepAfter || record.Timestamp <= 0 ||
+                    record.Timestamp > DateTimeOffset.UtcNow.AddDays(1).ToUnixTimeSeconds())
+                    continue;
+                if (_minedBlockRecords.All(item => !string.Equals(item.BlockId, record.BlockId, StringComparison.OrdinalIgnoreCase)))
+                    _minedBlockRecords.Add(record);
+            }
+        }
+        catch (Exception ex)
+        {
+            WriteNodeLog("Не удалось загрузить счётчик добытых блоков: " + ex.Message);
+        }
+    }
+
+    private async Task RefreshWalletMinedBlocksAsync()
+    {
+        GeoCoinRpcClient? rpc = _rpc;
+        DateTimeOffset now = DateTimeOffset.UtcNow;
+        if (rpc is null || !File.Exists(AppPaths.WalletPath) || now - _lastWalletMiningStatsPollUtc < TimeSpan.FromSeconds(20))
+            return;
+
+        _lastWalletMiningStatsPollUtc = now;
+        try
+        {
+            JsonElement result = await rpc.CallAsync("listtransactions", new object[] { "*", 1000, 0, true });
+            if (!ReferenceEquals(rpc, _rpc) || result.ValueKind != JsonValueKind.Array) return;
+
+            lock (_minedBlocksLock)
+            {
+                foreach (JsonElement entry in result.EnumerateArray())
+                {
+                    string category = ReadString(entry, "category").ToLowerInvariant();
+                    string txid = ReadString(entry, "txid");
+                    string blockId = ReadString(entry, "blockhash");
+
+                    if (category == "orphan")
+                    {
+                        RemoveMinedBlockLocked(blockId, txid);
+                        continue;
+                    }
+                    if (category is not ("immature" or "generate") || string.IsNullOrWhiteSpace(txid))
+                        continue;
+
+                    long timestamp = ReadInt64(entry, "blocktime");
+                    if (timestamp <= 0) timestamp = ReadInt64(entry, "time");
+                    if (timestamp <= 0 || timestamp > now.AddDays(1).ToUnixTimeSeconds()) continue;
+                    if (string.IsNullOrWhiteSpace(blockId)) blockId = txid;
+
+                    UpsertMinedBlockLocked(new MinedBlockRecord(blockId, txid, timestamp, "local-wallet"));
+                }
+
+                PruneMinedBlockRecordsLocked();
+                SaveMinedBlockRecordsLocked();
+            }
+            RefreshMinedBlockCountersOnUi();
+        }
+        catch
+        {
+            // The node may be starting, the wallet may be unavailable, or RPC may be reconnecting.
+        }
+    }
+
+    private void RegisterMinedBlock(MinedBlockRecord record)
+    {
+        lock (_minedBlocksLock)
+        {
+            UpsertMinedBlockLocked(record);
+            PruneMinedBlockRecordsLocked();
+            SaveMinedBlockRecordsLocked();
+        }
+        RefreshMinedBlockCountersOnUi();
+    }
+
+    private void UpsertMinedBlockLocked(MinedBlockRecord record)
+    {
+        int existingIndex = _minedBlockRecords.FindIndex(item =>
+            string.Equals(item.BlockId, record.BlockId, StringComparison.OrdinalIgnoreCase));
+        if (existingIndex >= 0)
+        {
+            MinedBlockRecord existing = _minedBlockRecords[existingIndex];
+            bool hasGpuAcceptanceTime = existing.Source is "local-gpu" or "remote-gpu";
+            record = record with
+            {
+                TransactionId = string.IsNullOrWhiteSpace(record.TransactionId) ? existing.TransactionId : record.TransactionId,
+                Timestamp = hasGpuAcceptanceTime ? existing.Timestamp : record.Timestamp,
+                Source = hasGpuAcceptanceTime ? existing.Source : record.Source
+            };
+            _minedBlockRecords[existingIndex] = record;
+        }
+        else
+        {
+            _minedBlockRecords.Add(record);
+        }
+
+        long timestamp = record.Timestamp;
+        bool belongsToSession = _miningSessionStartedAt is DateTimeOffset sessionStart &&
+            timestamp >= sessionStart.ToUnixTimeSeconds() &&
+            (_miningSessionActive || (_miningSessionEndedAt is DateTimeOffset sessionEnd && timestamp <= sessionEnd.ToUnixTimeSeconds()));
+        if (belongsToSession)
+            _miningSessionBlockIds.Add(record.BlockId);
+        else if (existingIndex >= 0)
+            _miningSessionBlockIds.Remove(record.BlockId);
+    }
+
+    private void RemoveMinedBlockLocked(string blockId, string transactionId)
+    {
+        foreach (MinedBlockRecord record in _minedBlockRecords.Where(record =>
+                     (!string.IsNullOrWhiteSpace(blockId) && string.Equals(record.BlockId, blockId, StringComparison.OrdinalIgnoreCase)) ||
+                     (!string.IsNullOrWhiteSpace(transactionId) && string.Equals(record.TransactionId, transactionId, StringComparison.OrdinalIgnoreCase))).ToArray())
+        {
+            _minedBlockRecords.Remove(record);
+            _miningSessionBlockIds.Remove(record.BlockId);
+        }
+    }
+
+    private void UpdateMiningSessionState()
+    {
+        bool changed = false;
+        lock (_minedBlocksLock)
+        {
+            bool miningActive = _cpuMiningActive || _gpuMiningActive;
+            if (miningActive && !_miningSessionActive)
+            {
+                _miningSessionStartedAt = DateTimeOffset.Now;
+                _miningSessionEndedAt = null;
+                _miningSessionBlockIds.Clear();
+                _miningSessionActive = true;
+                changed = true;
+            }
+            else if (!miningActive && _miningSessionActive)
+            {
+                _miningSessionActive = false;
+                _miningSessionEndedAt = DateTimeOffset.Now;
+                changed = true;
+            }
+            if (changed)
+            {
+                PruneMinedBlockRecordsLocked();
+                SaveMinedBlockRecordsLocked();
+            }
+        }
+        RefreshMinedBlockCountersOnUi();
+    }
+
+    private void PruneMinedBlockRecordsLocked()
+    {
+        long keepAfter = DateTimeOffset.UtcNow.AddDays(-7).ToUnixTimeSeconds();
+        _minedBlockRecords.RemoveAll(record => record.Timestamp < keepAfter &&
+            (!_miningSessionActive || !_miningSessionBlockIds.Contains(record.BlockId)));
+    }
+
+    private void SaveMinedBlockRecordsLocked()
+    {
+        string? tempPath = null;
+        try
+        {
+            Directory.CreateDirectory(AppPaths.DataRoot);
+            tempPath = AppPaths.MinedBlocksPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
+            var ledger = new MinedBlockLedger(
+                _minedBlockRecords.ToList(),
+                _miningSessionStartedAt?.ToUnixTimeSeconds(),
+                _miningSessionEndedAt?.ToUnixTimeSeconds(),
+                _miningSessionBlockIds.ToList());
+            File.WriteAllText(tempPath, JsonSerializer.Serialize(ledger), new UTF8Encoding(false));
+            File.Move(tempPath, AppPaths.MinedBlocksPath, overwrite: true);
+        }
+        catch (Exception ex)
+        {
+            WriteNodeLog("Не удалось сохранить счётчик добытых блоков: " + ex.Message);
+            if (tempPath is not null)
+            {
+                try { File.Delete(tempPath); } catch { }
+            }
+        }
+    }
+
+    private void RefreshMinedBlockCountersOnUi()
+    {
+        if (IsDisposed || !IsHandleCreated) return;
+        if (InvokeRequired)
+        {
+            try { BeginInvoke((Action)UpdateMinedBlockCounters); } catch (InvalidOperationException) { }
+            return;
+        }
+        UpdateMinedBlockCounters();
+    }
+
+    private void UpdateMinedBlockCounters()
+    {
+        if (_minedBlocksTodayLabel.IsDisposed || _minedBlocksSessionLabel.IsDisposed) return;
+        int todayCount;
+        int sessionCount;
+        bool sessionActive;
+        bool sessionStarted;
+        DateTime today = DateTime.Now.Date;
+        lock (_minedBlocksLock)
+        {
+            todayCount = _minedBlockRecords
+                .Where(record => record.Timestamp > 0 && DateTimeOffset.FromUnixTimeSeconds(record.Timestamp).ToLocalTime().Date == today)
+                .Select(record => record.BlockId)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Count();
+            sessionCount = _miningSessionBlockIds.Count;
+            sessionActive = _miningSessionActive;
+            sessionStarted = _miningSessionStartedAt.HasValue;
+        }
+
+        _minedBlocksTodayLabel.Text = $"Сегодня: {FormatBlockCount(todayCount)}";
+        string sessionTitle = sessionActive ? "Текущая сессия" : sessionStarted ? "Последняя сессия" : "Сессия";
+        _minedBlocksSessionLabel.Text = $"{sessionTitle}: {FormatBlockCount(sessionCount)}";
+    }
+
+    private static string FormatBlockCount(int count)
+    {
+        long value = Math.Abs((long)count);
+        long lastTwoDigits = value % 100;
+        long lastDigit = value % 10;
+        string noun = lastTwoDigits is >= 11 and <= 14 ? "блоков" : lastDigit switch
+        {
+            1 => "блок",
+            >= 2 and <= 4 => "блока",
+            _ => "блоков"
+        };
+        return $"{count:N0} {noun}";
     }
 
     private async Task StopGpuMinerAsync()
@@ -1906,6 +2220,7 @@ internal sealed class MainForm : Form
         {
             _gpuMiningActive = false;
             _remoteGpuMining = false;
+            UpdateMiningSessionState();
             DeleteRemoteMinerPassFile();
             return;
         }
@@ -1929,6 +2244,7 @@ internal sealed class MainForm : Form
             try { miner.Dispose(); } catch { }
             _gpuMiningActive = false;
             _remoteGpuMining = false;
+            UpdateMiningSessionState();
             DeleteRemoteMinerPassFile();
             _gpuStatusText = "GPU-майнинг остановлен";
             _gpuHashrateText = "Скорость GPU: —";
@@ -2336,10 +2652,12 @@ internal sealed class MainForm : Form
                     _cpuMiningActive = mining.TryGetProperty("generate", out JsonElement generate) &&
                         generate.ValueKind == JsonValueKind.True;
                     _cpuHashrateValue = _cpuMiningActive ? ReadDouble(mining, "hashrate") : 0;
+                    UpdateMiningSessionState();
                 }
                 catch { }
             }
 
+            await RefreshWalletMinedBlocksAsync();
             _nodeStatus = _headers > 0 && _height >= _headers ? "Синхронизация завершена" : "Синхронизация";
         }
         catch
@@ -2449,6 +2767,7 @@ internal sealed class MainForm : Form
         _cpuMiningActive = false;
         _cpuHashrateValue = 0;
         _gpuMiningActive = false;
+        UpdateMiningSessionState();
         _gpuStatusText = "GPU-майнинг остановлен";
         _gpuHashrateText = "Скорость GPU: —";
         _lastAddress = null;

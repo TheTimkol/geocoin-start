@@ -7,7 +7,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>GeoCoin-Start</AssemblyName>
     <RootNamespace>GeoCoinStart</RootNamespace>
-    <Version>0.2.4</Version>
+    <Version>0.2.5</Version>
     <ApplicationIcon>Assets\geocoin.ico</ApplicationIcon>
   </PropertyGroup>
 </Project>

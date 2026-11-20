@@ -10,6 +10,7 @@ Russian-language installer and simplified GeoCoin wallet for Windows 10/11 x64.
 - Node health page with process status, RPC response, peer count, live node/miner log, and LAN-only miner RPC credentials.
 - Remote GPU subminer mode for connecting this computer to a GeoCoin node on another PC. It is exclusive with the local node mode and uses miner-role credentials plus a public reward address.
 - One mining page with independent CPU and GPU controls. Both can run together, with separate hashrates; GPU rewards go to an existing address in the current wallet.
+- Accepted blocks mined today and in the current or most recent mining session, deduplicated by block hash. Both counts persist across application restarts.
 - Transaction history showing date, type, amount, fee, confirmations, address, and copyable transaction ID.
 - Password-protected wallets with full-wallet `.dat` backup export and import from existing GeoCoin wallet files or backups. Import asks for the file password when it is protected and does not change the source file.
 - Import/export of a 64-character hexadecimal private key for an individual address. GeoCoin has no mnemonic seed phrase; use the `.dat` wallet backup for a full copy.
