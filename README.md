@@ -14,7 +14,7 @@ Run the setup file and choose **Install**. An internet connection is required: t
 - CPU mining with a thread selector, plus GPU mining with device detection through the official GeoCoin GPU miner.
 - Sending GeoCoin with an automatically calculated fee and a confirmation screen.
 - Receiving GeoCoin with a new address and a copy button.
-- Password-protected wallet creation, encrypted backup export, and restore/import from an encrypted GeoCoin backup.
+- Password-protected wallet creation, encrypted backup export, and import from an existing GeoCoin wallet file or encrypted backup. Import asks for the wallet file's password and keeps the original file unchanged.
 - A Windows uninstaller in the Start menu and Installed Apps. Wallet and node data are kept by default; removal of those data is an explicit option.
 
 Mining starts only after the user chooses a device and confirms. GPU mining requires a supported graphics card and working CUDA, HIP, or OpenCL drivers. The app does not install graphics drivers.

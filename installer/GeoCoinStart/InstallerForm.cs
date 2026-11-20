@@ -53,7 +53,7 @@ internal sealed class InstallerForm : Form
         Controls.Add(_title);
 
         _subtitle.Text = _alreadyInstalled
-            ? "Приложение уже установлено на этом компьютере."
+            ? "Приложение уже установлено. Кнопка ниже обновит его до версии из этого установщика."
             : "Один мастер установки. Официальный GeoCoin скачается автоматически.";
         _subtitle.AutoSize = true;
         _subtitle.ForeColor = Color.FromArgb(201, 208, 199);
@@ -88,7 +88,7 @@ internal sealed class InstallerForm : Form
 
         _status = new Label
         {
-            Text = _alreadyInstalled ? "Версия GeoCoin: " + AppPaths.OfficialVersion : "Готово к установке",
+            Text = _alreadyInstalled ? "Готово к обновлению GeoCoin-Start" : "Готово к установке",
             AutoSize = true,
             ForeColor = Color.FromArgb(201, 208, 199)
         };
@@ -106,7 +106,7 @@ internal sealed class InstallerForm : Form
 
         _installButton = new Button
         {
-            Text = _alreadyInstalled ? "Открыть GeoCoin-Start" : "Установить",
+            Text = _alreadyInstalled ? "Обновить GeoCoin-Start" : "Установить",
             Size = new Size(190, 42),
             FlatStyle = FlatStyle.Flat,
             BackColor = Color.FromArgb(182, 149, 86),
@@ -125,9 +125,11 @@ internal sealed class InstallerForm : Form
 
     private async void InstallButtonClicked(object? sender, EventArgs e)
     {
-        if (_alreadyInstalled)
+        if (_alreadyInstalled && IsInstalledAppRunning())
         {
-            LaunchInstalledApp();
+            MessageBox.Show(this,
+                "Перед обновлением закройте GeoCoin-Start и остановите ноду. Затем запустите установщик снова.",
+                "Сначала закройте GeoCoin-Start", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
 
@@ -156,6 +158,24 @@ internal sealed class InstallerForm : Form
                 "GeoCoin-Start", MessageBoxButtons.OK, MessageBoxIcon.Error);
             _installButton.Enabled = true;
         }
+    }
+
+    private static bool IsInstalledAppRunning()
+    {
+        string expected = Path.GetFullPath(AppPaths.ExecutablePath);
+        foreach (Process process in Process.GetProcessesByName(Path.GetFileNameWithoutExtension(expected)))
+        {
+            using (process)
+            {
+                try
+                {
+                    if (process.HasExited || process.MainModule?.FileName is not string actual) continue;
+                    if (string.Equals(Path.GetFullPath(actual), expected, StringComparison.OrdinalIgnoreCase)) return true;
+                }
+                catch { }
+            }
+        }
+        return false;
     }
 
     private void LayoutContent()

@@ -103,7 +103,7 @@ internal sealed class MainForm : Form
         };
         _walletRestoreButton.Click += async (_, _) =>
         {
-            await RestoreWalletAsync();
+            await ImportWalletAsync();
             BuildPage();
         };
         _mineButton.Click += async (_, _) => await ToggleMiningAsync();
@@ -400,14 +400,14 @@ internal sealed class MainForm : Form
         _walletButton.Enabled = IsNodeRunning();
         _pagePanel.Controls.Add(_walletButton);
 
-        _walletRestoreButton.Text = hasWallet ? "Заменить кошелёк" : "Восстановить кошелёк";
+        _walletRestoreButton.Text = hasWallet ? "Импортировать другой" : "Импортировать кошелёк";
         StyleSecondaryButton(_walletRestoreButton, new Point(232, 468), new Size(230, 42));
         _walletRestoreButton.Enabled = IsNodeRunning();
         _pagePanel.Controls.Add(_walletRestoreButton);
 
         _overviewHint.Text = File.Exists(AppPaths.WalletPath)
             ? "Сделайте резервную копию кошелька и храните её отдельно от компьютера."
-            : "После подключения создайте защищённый паролем кошелёк. Пароль нельзя восстановить через это приложение.";
+            : "Создайте кошелёк или импортируйте существующий файл GeoCoin. Пароль хранится только у вас.";
         _overviewHint.Location = UiPoint(24, 524);
         _overviewHint.Size = UiSize(cardWidth - 24, 44);
         _overviewHint.ForeColor = Muted;
@@ -559,7 +559,7 @@ internal sealed class MainForm : Form
         else if (!File.Exists(AppPaths.WalletPath)) AddParagraph("Сначала создайте кошелёк на странице «Обзор».", 24, 394, cardWidth - 48, 32);
     }
 
-    private async Task StartNodeAsync(bool offerWalletCreation = true)
+    private async Task StartNodeAsync(bool offerWalletCreation = true, string? suppliedWalletPassword = null)
     {
         if (!File.Exists(AppPaths.NodePath))
         {
@@ -574,7 +574,7 @@ internal sealed class MainForm : Form
         bool existingWallet = File.Exists(AppPaths.WalletPath);
         if (existingWallet)
         {
-            walletPassword = PasswordDialog.AskToUnlock(this);
+            walletPassword = suppliedWalletPassword ?? PasswordDialog.AskToUnlock(this);
             if (walletPassword is null) return;
         }
 
@@ -779,25 +779,40 @@ internal sealed class MainForm : Form
         }
     }
 
-    private async Task RestoreWalletAsync()
+    private async Task ImportWalletAsync()
     {
         if (!IsNodeRunning() || _rpc is null) return;
         using var dialog = new OpenFileDialog
         {
-            Title = "Выберите резервную копию кошелька GeoCoin",
-            Filter = "Зашифрованная копия кошелька (*.dat)|*.dat|Все файлы (*.*)|*.*",
+            Title = "Выберите файл кошелька GeoCoin",
+            Filter = "Файлы GeoCoin (*.dat;*.wallet;*.bin)|*.dat;*.wallet;*.bin|Все файлы (*.*)|*.*",
             CheckFileExists = true,
             Multiselect = false
         };
         if (dialog.ShowDialog(this) != DialogResult.OK) return;
+        if (MessageBox.Show(this,
+                "Перед импортом закройте оригинальный клиент GeoCoin, если выбранный кошелёк открыт в нём. Исходный файл останется без изменений.",
+                "Импорт кошелька", MessageBoxButtons.OKCancel, MessageBoxIcon.Information) != DialogResult.OK)
+            return;
+
+        string sourcePath = Path.GetFullPath(dialog.FileName);
+        if (string.Equals(sourcePath, Path.GetFullPath(AppPaths.WalletPath), StringComparison.OrdinalIgnoreCase))
+        {
+            MessageBox.Show(this, "Этот файл уже выбран как текущий кошелёк.", "Кошелёк уже открыт",
+                MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+        string? sourcePassword = PasswordDialog.AskToUnlock(this);
+        if (sourcePassword is null) return;
 
         bool replacingWallet = File.Exists(AppPaths.WalletPath);
         string? preservedWallet = null;
         string? recoveryCopy = null;
-        bool restored = false;
+        bool stoppedForImport = false;
+        bool imported = false;
         if (replacingWallet && MessageBox.Show(this,
-                "Текущий кошелёк будет заменён. Перед этим GeoCoin-Start создаст его зашифрованную копию и сохранит исходный файл отдельно. Продолжить?",
-                "Заменить кошелёк", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2) != DialogResult.Yes)
+                "Текущий кошелёк будет заменён. Перед этим GeoCoin-Start создаст его резервную копию и сохранит исходный файл отдельно. Продолжить?",
+                "Импортировать другой кошелёк", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2) != DialogResult.Yes)
             return;
 
         try
@@ -807,56 +822,57 @@ internal sealed class MainForm : Form
             {
                 recoveryCopy = UniqueWalletBackupPath("до-импорта");
                 await _rpc.CallAsync("backupwallet", new[] { recoveryCopy });
-                await StopNodeAsync();
-                if (IsNodeRunning()) throw new InvalidOperationException("Сначала остановите ноду GeoCoin.");
-                preservedWallet = UniqueWalletBackupPath("старый-кошелёк");
-                File.Move(AppPaths.WalletPath, preservedWallet);
-                await StartNodeAsync(offerWalletCreation: false);
-                if (!IsNodeRunning()) throw new InvalidOperationException("Не удалось подготовить ноду для восстановления.");
             }
-
-            if (_rpc is null) throw new InvalidOperationException("Подключение к ноде потеряно.");
-            await _rpc.CallAsync("restorewallet", new[] { dialog.FileName });
-            restored = true;
 
             await StopNodeAsync();
-            await StartNodeAsync(offerWalletCreation: false);
-            if (IsNodeRunning())
+            if (IsNodeRunning()) throw new InvalidOperationException("Не удалось безопасно остановить ноду GeoCoin.");
+            stoppedForImport = true;
+            if (replacingWallet)
             {
-                MessageBox.Show(this,
-                    "Кошелёк восстановлен. После повторного запуска введите его пароль, когда приложение попросит. Синхронизация истории начнётся автоматически.",
-                    "Кошелёк восстановлен", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                await RefreshStateAsync();
+                preservedWallet = UniqueWalletBackupPath("старый-кошелёк");
+                File.Move(AppPaths.WalletPath, preservedWallet);
             }
+
+            // Open the selected wallet file with the same passphrase-based loader used by the official client.
+            File.Copy(sourcePath, AppPaths.WalletPath, overwrite: false);
+            await StartNodeAsync(offerWalletCreation: false, suppliedWalletPassword: sourcePassword);
+            if (!IsNodeRunning()) throw new InvalidOperationException("GeoCoin не смог открыть этот файл. Проверьте пароль и выберите файл кошелька из оригинального клиента.");
+            imported = true;
+            await RefreshStateAsync();
+            MessageBox.Show(this,
+                "Кошелёк импортирован и открыт. Исходный файл не изменён. История операций будет синхронизирована с сетью.",
+                "Кошелёк импортирован", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
         catch (Exception ex)
         {
-            if (!restored && replacingWallet && !string.IsNullOrEmpty(preservedWallet) && File.Exists(preservedWallet))
+            string? failedImport = null;
+            if (stoppedForImport && !imported)
             {
                 try
                 {
                     if (IsNodeRunning()) await StopNodeAsync();
                     if (File.Exists(AppPaths.WalletPath))
                     {
-                        string failedImport = UniqueWalletBackupPath("неудачный-импорт");
+                        failedImport = UniqueWalletBackupPath("неудачный-импорт");
                         File.Move(AppPaths.WalletPath, failedImport);
                     }
-                    File.Move(preservedWallet, AppPaths.WalletPath);
+                    if (!string.IsNullOrEmpty(preservedWallet) && File.Exists(preservedWallet))
+                        File.Move(preservedWallet, AppPaths.WalletPath);
                     await StartNodeAsync(offerWalletCreation: false);
                 }
                 catch (Exception rollbackError)
                 {
                     MessageBox.Show(this,
-                        "Восстановление не удалось, и автоматический возврат исходного кошелька завершился ошибкой. Исходный файл сохранён здесь:\n" +
-                        preservedWallet + "\n\n" + rollbackError.Message,
-                        "Проверьте резервную копию", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                        "Импорт не завершился. Исходный кошелёк сохранён здесь:\n" + (preservedWallet ?? recoveryCopy ?? "") +
+                        "\n\n" + rollbackError.Message,
+                        "Проверьте файл кошелька", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 }
             }
             MessageBox.Show(this,
-                (restored ? "Кошелёк восстановлен, но приложение не смогло автоматически перезапустить ноду. Запустите её вручную.\n\n" : "Не удалось восстановить кошелёк.\n\n") + ex.Message +
-                (recoveryCopy is null ? "" : "\n\nРезервная копия прежнего кошелька сохранена: " + recoveryCopy),
-                restored ? "Восстановление завершено" : "Ошибка восстановления",
-                MessageBoxButtons.OK, restored ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
+                "Не удалось импортировать файл кошелька. Убедитесь, что выбран файл GeoCoin и введён его пароль.\n\n" + ex.Message +
+                (recoveryCopy is null ? "" : "\n\nРезервная копия прежнего кошелька сохранена: " + recoveryCopy) +
+                (failedImport is null ? "" : "\n\nНеудачная копия сохранена отдельно: " + failedImport),
+                "Ошибка импорта", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
     }
 

@@ -4,9 +4,11 @@ internal sealed class PasswordDialog : Form
 {
     private readonly TextBox _password;
     private readonly TextBox? _confirmation;
+    private readonly int _minimumLength;
 
-    private PasswordDialog(string title, string message, bool create)
+    private PasswordDialog(string title, string message, bool create, int minimumLength)
     {
+        _minimumLength = minimumLength;
         Text = title;
         StartPosition = FormStartPosition.CenterParent;
         FormBorderStyle = FormBorderStyle.FixedDialog;
@@ -78,9 +80,12 @@ internal sealed class PasswordDialog : Form
         };
         accept.Click += (_, _) =>
         {
-            if (_password.Text.Length < 10)
+            if (_password.Text.Length < _minimumLength)
             {
-                MessageBox.Show(this, "Задайте пароль длиной не менее 10 символов.", "Защита кошелька",
+                string requirement = _minimumLength == 0
+                    ? "Введите пароль кошелька или оставьте поле пустым, если файл не зашифрован."
+                    : $"Задайте пароль длиной не менее {_minimumLength} символов.";
+                MessageBox.Show(this, requirement, "Защита кошелька",
                     MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
@@ -105,7 +110,8 @@ internal sealed class PasswordDialog : Form
         using var dialog = new PasswordDialog(
             "Создание кошелька",
             "Придумайте пароль и сохраните его отдельно. Без него открыть кошелёк и отправить монеты не получится.",
-            create: true);
+            create: true,
+            minimumLength: 10);
         return dialog.ShowDialog(owner) == DialogResult.OK ? dialog.Password : null;
     }
 
@@ -113,8 +119,9 @@ internal sealed class PasswordDialog : Form
     {
         using var dialog = new PasswordDialog(
             "Открытие кошелька",
-            "Введите пароль, который вы задали при создании кошелька.",
-            create: false);
+            "Введите пароль этого файла кошелька. Если файл не защищён паролем, оставьте поле пустым.",
+            create: false,
+            minimumLength: 0);
         return dialog.ShowDialog(owner) == DialogResult.OK ? dialog.Password : null;
     }
 
@@ -123,7 +130,8 @@ internal sealed class PasswordDialog : Form
         using var dialog = new PasswordDialog(
             "Подтвердите действие",
             $"Введите пароль кошелька, чтобы {action}.",
-            create: false);
+            create: false,
+            minimumLength: 0);
         return dialog.ShowDialog(owner) == DialogResult.OK ? dialog.Password : null;
     }
 }
