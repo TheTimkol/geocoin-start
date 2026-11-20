@@ -4,6 +4,7 @@ internal static partial class UiLocalization
 {
     private static readonly Dictionary<string, string> AdditionalRussianToEnglish = new(StringComparer.Ordinal)
     {
+        ["Не удалось создать короткий ASCII-путь для ноды. Освободите букву диска и запустите GeoCoin-Start снова."] = "Could not create a short ASCII path for the node. Free a drive letter and start GeoCoin-Start again.",
         ["     Узлов сети: "] = " Hosts: ",
         [" · подключений: "] = " connections: ",
         [" блок"] = " block",
@@ -195,6 +196,7 @@ internal static partial class UiLocalization
 
     private static readonly Dictionary<string, string> AdditionalChinese = new(StringComparer.Ordinal)
     {
+        ["Could not create a short ASCII path for the node. Free a drive letter and start GeoCoin-Start again."] = "无法为节点创建简短的 ASCII 路径。请释放一个驱动器号，然后重新启动 GeoCoin-Start。",
         [" Hosts: "] = " 网络节点： ",
         [" connections: "] = " 连接： ",
         [" block"] = " 区块",
@@ -377,6 +379,7 @@ internal static partial class UiLocalization
 
     private static readonly Dictionary<string, string> AdditionalPortuguese = new(StringComparer.Ordinal)
     {
+        ["Could not create a short ASCII path for the node. Free a drive letter and start GeoCoin-Start again."] = "Não foi possível criar um caminho ASCII curto para o nó. Libere uma letra de unidade e inicie o GeoCoin-Start novamente.",
         [" Hosts: "] = " Nós da rede: ",
         [" connections: "] = " conexões: ",
         [" block"] = " bloco",
@@ -559,6 +562,7 @@ internal static partial class UiLocalization
 
     private static readonly Dictionary<string, string> AdditionalItalian = new(StringComparer.Ordinal)
     {
+        ["Could not create a short ASCII path for the node. Free a drive letter and start GeoCoin-Start again."] = "Impossibile creare un percorso ASCII breve per il nodo. Libera una lettera di unità e avvia di nuovo GeoCoin-Start.",
         [" Hosts: "] = " Nodi della rete: ",
         [" connections: "] = " connessioni: ",
         [" block"] = " blocco",

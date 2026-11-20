@@ -32,7 +32,7 @@ internal static class Program
 
 internal static class AppPaths
 {
-    public const string AppVersion = "0.3.0";
+    public const string AppVersion = "0.3.1";
     public const string OfficialVersion = "v0.1.3";
     public const string OfficialSha256 = "D97D655E3B45CD1B80BA4553BD5415F2B4FDD0FE370E50BA30158188D0C0EF99";
     public const string OfficialArchiveUrl = "https://github.com/NoemaCrypt/GeoCoin/releases/download/v0.1.3/GeoCoin-windows-x64-static.zip";
@@ -52,6 +52,7 @@ internal static class AppPaths
     public static string WalletPath => Path.Combine(DataRoot, "wallet.dat");
     public static string MinedBlocksPath => Path.Combine(DataRoot, "mined-blocks.json");
     public static string UiSettingsPath => Path.Combine(DataRoot, "ui-settings.json");
+    public static string NodeSessionDirectory => Path.Combine(DataRoot, "sessions");
     public static string WalletBackupDirectory => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "GeoCoin-Start", "wallet-backups");

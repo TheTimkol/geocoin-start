@@ -263,6 +263,7 @@ internal sealed class MainForm : Form
     private DataGridView? _transactionGrid;
     private Process? _nodeProcess;
     private Process? _gpuMinerProcess;
+    private WindowsAsciiPathAlias? _nodePathAlias;
     private StreamWriter? _logWriter;
     private string? _adminPassword;
     private string? _minerPassword;
@@ -327,6 +328,11 @@ internal sealed class MainForm : Form
         ForeColor = Ink;
         Font = new Font("Segoe UI", 10);
         FormClosing += HandleClosing;
+        FormClosed += (_, _) =>
+        {
+            _nodePathAlias?.Dispose();
+            _nodePathAlias = null;
+        };
 
         LoadMinedBlockRecords();
         BuildShell();
@@ -1528,7 +1534,7 @@ internal sealed class MainForm : Form
             if (walletPassword is null) return;
         }
 
-        string sessionDirectory = Path.Combine(Path.GetTempPath(), "geocoin-start-" + Guid.NewGuid().ToString("N"));
+        string sessionDirectory = Path.Combine(AppPaths.NodeSessionDirectory, Guid.NewGuid().ToString("N"));
         _startingNode = true;
         _nodeStatus = "Запускаю ноду…";
         _rpcHealthy = false;
@@ -1537,6 +1543,7 @@ internal sealed class MainForm : Form
         try
         {
             Directory.CreateDirectory(AppPaths.DataRoot);
+            Directory.CreateDirectory(AppPaths.NodeSessionDirectory);
             Directory.CreateDirectory(sessionDirectory);
             _adminPassword = RandomSecret();
             _sessionDirectory = sessionDirectory;
@@ -1550,14 +1557,14 @@ internal sealed class MainForm : Form
 
             var start = new ProcessStartInfo
             {
-                FileName = AppPaths.NodePath,
-                WorkingDirectory = AppPaths.OfficialDirectory,
+                FileName = NodeCompatiblePath(AppPaths.NodePath),
+                WorkingDirectory = NodeCompatiblePath(AppPaths.OfficialDirectory),
                 UseShellExecute = false,
                 CreateNoWindow = true,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true
             };
-            AddArgument(start, "--data-dir", AppPaths.DataRoot);
+            AddArgument(start, "--data-dir", NodeCompatiblePath(AppPaths.DataRoot));
             AddArgument(start, "--network", "degree");
             start.ArgumentList.Add("--rpc");
             AddArgument(start, "--rpc-bind", _rpcBindAddress);
@@ -1565,12 +1572,12 @@ internal sealed class MainForm : Form
                 start.Environment["GEOCOIN_ALLOW_PUBLIC_RPC_BIND"] = "1";
             AddArgument(start, "--rpc-port", "3033");
             AddArgument(start, "--rpc-user", "geocoin-start");
-            AddArgument(start, "--rpc-pass-file", adminFile);
+            AddArgument(start, "--rpc-pass-file", NodeCompatiblePath(adminFile));
             AddArgument(start, "--rpc-miner-user", _minerRpcUsername);
-            AddArgument(start, "--rpc-miner-pass-file", _minerPassFile);
-            AddArgument(start, "--activation-manifest", AppPaths.ProductionManifestPath);
+            AddArgument(start, "--rpc-miner-pass-file", NodeCompatiblePath(_minerPassFile));
+            AddArgument(start, "--activation-manifest", NodeCompatiblePath(AppPaths.ProductionManifestPath));
             AddArgument(start, "--status-interval", "30");
-            if (walletFile is not null) AddArgument(start, "--wallet-password-file", walletFile);
+            if (walletFile is not null) AddArgument(start, "--wallet-password-file", NodeCompatiblePath(walletFile));
 
             _logWriter?.Dispose();
             _logWriter = new StreamWriter(new FileStream(AppPaths.LogPath, FileMode.Append, FileAccess.Write, FileShare.ReadWrite))
@@ -1632,6 +1639,7 @@ internal sealed class MainForm : Form
                     _minerPassFile = null;
                     _minerPassword = null;
                     _adminPassword = null;
+                    ReleaseNodePathAliasIfIdle();
                 }
                 _nodeStatus = "Нода не подключена";
                 _rpcHealthy = false;
@@ -1856,8 +1864,8 @@ internal sealed class MainForm : Form
         {
             var start = new ProcessStartInfo
             {
-                FileName = AppPaths.GpuMinerPath,
-                WorkingDirectory = AppPaths.OfficialDirectory,
+                FileName = NodeCompatiblePath(AppPaths.GpuMinerPath),
+                WorkingDirectory = NodeCompatiblePath(AppPaths.OfficialDirectory),
                 UseShellExecute = false,
                 CreateNoWindow = true,
                 RedirectStandardOutput = true,
@@ -1916,6 +1924,7 @@ internal sealed class MainForm : Form
         finally
         {
             _checkingGpuDevices = false;
+            ReleaseNodePathAliasIfIdle();
             if (_currentPage == "mining" || _currentPage == "subminer") BuildPage();
         }
     }
@@ -2007,8 +2016,8 @@ internal sealed class MainForm : Form
 
             var start = new ProcessStartInfo
             {
-                FileName = AppPaths.GpuMinerPath,
-                WorkingDirectory = AppPaths.OfficialDirectory,
+                FileName = NodeCompatiblePath(AppPaths.GpuMinerPath),
+                WorkingDirectory = NodeCompatiblePath(AppPaths.OfficialDirectory),
                 UseShellExecute = false,
                 CreateNoWindow = true,
                 RedirectStandardOutput = true,
@@ -2017,7 +2026,7 @@ internal sealed class MainForm : Form
             };
             AddArgument(start, "--url", $"http://{_rpcBindAddress}:3033/");
             AddArgument(start, "--rpc-user", _minerRpcUsername);
-            AddArgument(start, "--rpc-pass-file", _minerPassFile);
+            AddArgument(start, "--rpc-pass-file", NodeCompatiblePath(_minerPassFile));
             AddArgument(start, "--address", address);
             AddArgument(start, "--backend", device.Backend);
             AddArgument(start, "--devices", device.Id);
@@ -2045,6 +2054,7 @@ internal sealed class MainForm : Form
                         try { exitCode = miner.ExitCode; } catch { }
                         _gpuStatusText = DescribeGpuMinerExit(exitCode, remote: false);
                         _gpuHashrateText = "Скорость GPU: —";
+                        ReleaseNodePathAliasIfIdle();
                         if (!IsDisposed && (_currentPage == "mining" || _currentPage == "subminer")) BuildPage();
                         if (!IsDisposed && _currentPage == "node") UpdateNodePage();
                     }));
@@ -2071,6 +2081,7 @@ internal sealed class MainForm : Form
         {
             _gpuLastError = ex.Message;
             _gpuStatusText = "Не удалось запустить GPU-майнинг: " + ex.Message;
+            ReleaseNodePathAliasIfIdle();
             ShowLocalizedMessage(ex.Message, "Не удалось запустить GPU-майнинг", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
     }
@@ -2148,14 +2159,14 @@ internal sealed class MainForm : Form
             }
 
             _gpuStatusText = "Подготавливаю подключение к удалённой ноде…";
-            string tempDirectory = Path.Combine(Path.GetTempPath(), "geocoin-start-worker-" + Guid.NewGuid().ToString("N"));
+            string tempDirectory = Path.Combine(AppPaths.NodeSessionDirectory, Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(tempDirectory);
             passFile = Path.Combine(tempDirectory, "rpc-miner.pass");
             await File.WriteAllTextAsync(passFile, password + Environment.NewLine, new UTF8Encoding(false));
             var start = new ProcessStartInfo
             {
-                FileName = AppPaths.GpuMinerPath,
-                WorkingDirectory = AppPaths.OfficialDirectory,
+                FileName = NodeCompatiblePath(AppPaths.GpuMinerPath),
+                WorkingDirectory = NodeCompatiblePath(AppPaths.OfficialDirectory),
                 UseShellExecute = false,
                 CreateNoWindow = true,
                 RedirectStandardOutput = true,
@@ -2164,7 +2175,7 @@ internal sealed class MainForm : Form
             };
             AddArgument(start, "--url", endpoint.ToString());
             AddArgument(start, "--rpc-user", username);
-            AddArgument(start, "--rpc-pass-file", passFile);
+            AddArgument(start, "--rpc-pass-file", NodeCompatiblePath(passFile));
             AddArgument(start, "--address", address);
             AddArgument(start, "--backend", device.Backend);
             AddArgument(start, "--devices", device.Id);
@@ -2192,6 +2203,7 @@ internal sealed class MainForm : Form
                         try { exitCode = miner.ExitCode; } catch { }
                         _gpuStatusText = DescribeGpuMinerExit(exitCode, remote: true);
                         _gpuHashrateText = "Скорость GPU: —";
+                        ReleaseNodePathAliasIfIdle();
                         if (!IsDisposed && (_currentPage == "subminer" || _currentPage == "mining")) BuildPage();
                         if (!IsDisposed && _currentPage == "node") UpdateNodePage();
                     }));
@@ -2232,6 +2244,7 @@ internal sealed class MainForm : Form
         finally
         {
             _startingRemoteGpu = false;
+            ReleaseNodePathAliasIfIdle();
             if (!IsDisposed && (_currentPage == "subminer" || _currentPage == "node")) BuildPage();
         }
     }
@@ -2682,6 +2695,7 @@ internal sealed class MainForm : Form
             _remoteGpuMining = false;
             UpdateMiningSessionState();
             DeleteRemoteMinerPassFile();
+            ReleaseNodePathAliasIfIdle();
             return;
         }
         try
@@ -2708,6 +2722,7 @@ internal sealed class MainForm : Form
             DeleteRemoteMinerPassFile();
             _gpuStatusText = "GPU-майнинг остановлен";
             _gpuHashrateText = "Скорость GPU: —";
+            ReleaseNodePathAliasIfIdle();
         }
     }
 
@@ -3602,6 +3617,7 @@ internal sealed class MainForm : Form
             try { Directory.Delete(_sessionDirectory, recursive: true); } catch { }
             _sessionDirectory = null;
         }
+        ReleaseNodePathAliasIfIdle();
     }
 
     private async void HandleClosing(object? sender, FormClosingEventArgs e)
@@ -3643,6 +3659,19 @@ internal sealed class MainForm : Form
     {
         start.ArgumentList.Add(name);
         start.ArgumentList.Add(value);
+    }
+
+    private string NodeCompatiblePath(string path)
+    {
+        _nodePathAlias ??= WindowsAsciiPathAlias.CreateForLocalAppData();
+        return _nodePathAlias.Map(path);
+    }
+
+    private void ReleaseNodePathAliasIfIdle()
+    {
+        if (IsNodeProcessRunning() || _gpuMinerProcess is { HasExited: false }) return;
+        _nodePathAlias?.Dispose();
+        _nodePathAlias = null;
     }
 
     private void WriteNodeLog(string? line)
