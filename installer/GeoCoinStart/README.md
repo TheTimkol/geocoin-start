@@ -30,7 +30,7 @@ GeoCoin runs one node process with RPC enabled; RPC is an interface to that node
 
 Run `GeoCoin-Start-Setup.exe` and choose **Install**. An internet connection is required the first time. The official GeoCoin package and the application are installed under `%LOCALAPPDATA%\Programs\GeoCoin-Start`; main network data is stored under `%LOCALAPPDATA%\GeoCoin-Start\data`.
 
-The installer creates shortcuts in the Start menu and on the desktop. Remove GeoCoin-Start through **Settings → Apps → Installed apps** or the Start menu shortcut **Удалить GeoCoin-Start**. The uninstaller preserves the wallet, encrypted backups, and node data unless you explicitly select their removal.
+The installer creates shortcuts in the Start menu and on the desktop. Remove GeoCoin-Start through **Settings → Apps → Installed apps** or the GeoCoin-Start uninstall shortcut in the Start menu. The uninstaller preserves the wallet, encrypted backups, and node data unless you explicitly select their removal.
 
 ## Attribution
 
