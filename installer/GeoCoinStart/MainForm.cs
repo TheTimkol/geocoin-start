@@ -5,6 +5,7 @@ using System.Net.NetworkInformation;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using QRCoder;
 
 namespace GeoCoinStart;
 
@@ -16,19 +17,148 @@ internal sealed class MainForm : Form
     }
 
     private sealed record MinedBlockRecord(string BlockId, string TransactionId, long Timestamp, string Source);
-    private sealed record MinedBlockLedger(List<MinedBlockRecord> Blocks, long? SessionStartedAtUnix,
-        long? SessionEndedAtUnix, List<string> SessionBlockIds);
+    private sealed class MinedBlockLedger
+    {
+        public List<MinedBlockRecord> Blocks { get; set; } = new();
+        public long? SessionStartedAtUnix { get; set; }
+        public long? SessionEndedAtUnix { get; set; }
+        public List<string> SessionBlockIds { get; set; } = new();
+        public List<string> LifetimeBlockIds { get; set; } = new();
+        public Dictionary<string, string> TransactionToBlockIds { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+        public bool WalletHistoryBackfilled { get; set; }
+    }
 
-    private static readonly Color Canvas = Color.FromArgb(241, 241, 235);
-    private static readonly Color Ink = Color.FromArgb(31, 39, 34);
-    private static readonly Color Muted = Color.FromArgb(104, 115, 105);
-    private static readonly Color Accent = Color.FromArgb(166, 129, 63);
-    private static readonly Color Rail = Color.FromArgb(22, 31, 26);
+    private static readonly Color LightCanvas = Color.FromArgb(241, 241, 235);
+    private static readonly Color LightInk = Color.FromArgb(31, 39, 34);
+    private static readonly Color LightMuted = Color.FromArgb(104, 115, 105);
+    private static readonly Color LightRail = Color.FromArgb(22, 31, 26);
+    private static readonly Color DarkCanvas = Color.FromArgb(30, 35, 32);
+    private static readonly Color DarkSurface = Color.FromArgb(39, 46, 41);
+    private static readonly Color DarkInput = Color.FromArgb(47, 55, 49);
+    private static readonly Color DarkInk = Color.FromArgb(235, 238, 231);
+    private static readonly Color DarkMuted = Color.FromArgb(174, 185, 173);
+    private static readonly Color DarkRail = Color.FromArgb(17, 23, 20);
+    private static readonly Color DarkAccent = Color.FromArgb(184, 145, 76);
+    private Color Canvas => _darkTheme ? DarkCanvas : LightCanvas;
+    private Color Surface => _darkTheme ? DarkSurface : Color.White;
+    private Color InputSurface => _darkTheme ? DarkInput : Color.FromArgb(250, 250, 247);
+    private Color Ink => _darkTheme ? DarkInk : LightInk;
+    private Color Muted => _darkTheme ? DarkMuted : LightMuted;
+    private Color Accent => _darkTheme ? DarkAccent : Color.FromArgb(166, 129, 63);
+    private Color Rail => _darkTheme ? DarkRail : LightRail;
+    private Color Divider => _darkTheme ? Color.FromArgb(61, 68, 62) : Color.FromArgb(220, 220, 214);
+    private Color Success => _darkTheme ? Color.FromArgb(118, 194, 133) : Color.FromArgb(53, 119, 74);
+    private Color Error => _darkTheme ? Color.FromArgb(240, 137, 116) : Color.FromArgb(161, 70, 53);
+
+    private sealed class UiPreferences
+    {
+        public string Language { get; set; } = "ru";
+        public bool DarkTheme { get; set; }
+    }
+
+    private static readonly Dictionary<string, string> RussianToEnglish = new(StringComparer.Ordinal)
+    {
+        ["GeoCoin-Start — простой кошелёк"] = "GeoCoin-Start — simple wallet",
+        ["ПРОСТОЙ КОШЕЛЁК"] = "SIMPLE WALLET",
+        ["Обзор"] = "Overview", ["Майнинг"] = "Mining", ["Подмайнер"] = "Subminer", ["Нода"] = "Node",
+        ["Отправить"] = "Send", ["Получить"] = "Receive", ["История"] = "History", ["Кошелёк"] = "Wallet",
+        ["Нода и журнал"] = "Node and log", ["Отправить монеты"] = "Send coins", ["Получить монеты"] = "Receive coins",
+        ["История транзакций"] = "Transaction history", ["Управление кошельком"] = "Wallet management",
+        ["Управление GeoCoin без лишних настроек"] = "Manage GeoCoin without unnecessary settings",
+        ["Оригинальный проект ↗"] = "Original project ↗", ["Редистрибьютор: TheTimkol ↗"] = "Redistributor: TheTimkol ↗",
+        ["Тёмная тема"] = "Dark theme", ["Светлая тема"] = "Light theme",
+        ["Здесь видно состояние кошелька и синхронизации. Для начала запустите ноду."] = "View your wallet and sync status here. Start the node to begin.",
+        ["БАЛАНС КОШЕЛЬКА"] = "WALLET BALANCE", ["СОСТОЯНИЕ СЕТИ"] = "NETWORK STATUS", ["ДОБЫЧА И НАГРАДЫ"] = "MINING AND REWARDS",
+        ["Кошелёк ещё не создан"] = "Wallet has not been created",
+        ["Запустите ноду, чтобы начать подключение"] = "Start the node to connect",
+        ["Добытые блоки за всё время: "] = "Blocks mined all time: ", ["Зрелые монеты: "] = "Mature coins: ", ["Незрелые монеты: "] = "Immature coins: ",
+        ["Зрелые монеты: —"] = "Mature coins: —", ["Незрелые монеты: —"] = "Immature coins: —",
+        ["Запускаю ноду…"] = "Starting node…", ["Запустить ноду"] = "Start node", ["Остановить ноду"] = "Stop node",
+        ["Создать кошелёк"] = "Create wallet", ["Импортировать кошелёк"] = "Import wallet", ["Импортировать другой"] = "Import another wallet",
+        ["Экспортировать кошелёк (.dat)"] = "Export wallet (.dat)", ["Экспортировать весь кошелёк (.dat)"] = "Export full wallet (.dat)",
+        ["Сделайте резервную копию кошелька и храните её отдельно от компьютера."] = "Back up your wallet and store the copy away from this computer.",
+        ["Создайте кошелёк или импортируйте существующий файл GeoCoin. Пароль хранится только у вас."] = "Create a wallet or import an existing GeoCoin file. Only you know its password.",
+        ["CPU и GPU настраиваются в одном окне. Их можно запускать по отдельности или одновременно."] = "Set up CPU and GPU mining here. Run either one or both at the same time.",
+        ["ДОБЫТЫЕ БЛОКИ"] = "MINED BLOCKS", ["Майнинг на процессоре · CPU"] = "CPU mining", ["Потоки"] = "Threads",
+        ["CPU-майнинг включён · потоков: "] = "CPU mining running · threads: ", ["CPU-майнинг остановлен"] = "CPU mining stopped",
+        ["Скорость CPU: "] = "CPU hashrate: ", ["Остановить CPU"] = "Stop CPU", ["Запустить CPU"] = "Start CPU",
+        ["Майнинг на видеокарте · GPU"] = "GPU mining", ["Выберите видеокарту. Награда поступит на уже существующий адрес этого кошелька."] = "Choose a GPU. Rewards will go to an existing address in this wallet.",
+        ["Найти"] = "Find", ["GPU-майнинг остановлен"] = "GPU mining stopped", ["GPU-майнинг запущен. Ожидаю данные о скорости…"] = "GPU mining started. Waiting for hashrate…",
+        ["Скорость GPU: —"] = "GPU hashrate: —", ["Скорость GPU: ожидание данных…"] = "GPU hashrate: waiting for data…",
+        ["Адрес награды будет взят из текущего кошелька."] = "The reward address will come from the current wallet.", ["Адрес награды: "] = "Reward address: ",
+        ["Перейти к подмайнеру"] = "Open subminer", ["Остановить GPU"] = "Stop GPU", ["Запустить GPU"] = "Start GPU",
+        ["Сначала запустите ноду на странице «Обзор»."] = "Start the node on the Overview page first.",
+        ["Сначала создайте или импортируйте кошелёк на странице «Обзор»."] = "Create or import a wallet on the Overview page first.",
+        ["Один процесс GeoCoin выполняет работу ноды. RPC — интерфейс управления этой же нодой; отдельно запускать вторую RPC-ноду не нужно."] = "One GeoCoin process runs the node. RPC controls that same node; a second RPC node is not needed.",
+        ["СОСТОЯНИЕ УЗЛА"] = "NODE STATUS", ["ДОСТУП ДЛЯ GPU-ПОДМАЙНЕРА"] = "GPU SUBMINER ACCESS", ["Адрес прослушивания"] = "Listen address",
+        ["127.0.0.1 · только этот компьютер"] = "127.0.0.1 · this computer only",
+        ["Для подключения с другого ПК выберите частный IP этого компьютера. Используйте только доверенную сеть или VPN; не настраивайте проброс порта из интернета."] = "To connect another PC, choose this computer's private IP. Use a trusted LAN or VPN; do not expose this port to the internet.",
+        ["Имя пользователя майнера"] = "Miner username", ["Пароль майнера"] = "Miner password",
+        ["Показать"] = "Show", ["Скрыть"] = "Hide", ["Скопировать данные для подмайнера"] = "Copy subminer connection details",
+        ["Пароль не сохраняется после закрытия приложения. Для другого ПК выберите частный IP и запустите ноду."] = "The password is not saved after the app closes. Choose a private IP and start the node to connect another PC.",
+        ["Пароль действует, пока приложение открыто. Если появится запрос брандмауэра, разрешите только частные сети."] = "The password is kept only while the app is open. If Windows Firewall asks, allow private networks only.",
+        ["ЖУРНАЛ НОДЫ И МАЙНЕРА"] = "NODE AND MINER LOG", ["Открыть файл журнала"] = "Open log file",
+        ["Этот компьютер будет работать как GPU-подмайнер и подключится к уже запущенной ноде на другом ПК. Локальную ноду запускать не нужно."] = "This computer will act as a GPU subminer connected to a node on another PC. No local node is needed.",
+        ["ПОДКЛЮЧЕНИЕ К НОДЕ"] = "CONNECT TO NODE", ["Адрес RPC-ноды"] = "Node RPC address", ["Пароль роли майнера"] = "Miner role password",
+        ["Адрес для награды"] = "Reward address", ["Видеокарта"] = "GPU", ["Подключаюсь…"] = "Connecting…", ["Подключить и начать GPU-майнинг"] = "Connect and start GPU mining",
+        ["На узле нужен miner RPC-пользователь и пароль; admin RPC и пароль кошелька сюда не вводите. Подключайтесь только по доверенной LAN/VPN: RPC не шифрует пароль при передаче."] = "Use the miner RPC username and password from the node; do not enter the admin RPC or wallet password here. Connect only over a trusted LAN or VPN: RPC does not encrypt the password.",
+        ["Адрес получателя"] = "Recipient address", ["Адрес GeoCoin получателя"] = "GeoCoin recipient address", ["Введите сумму больше нуля, используя точку или запятую."] = "Enter an amount greater than zero, using a dot or comma.",
+        ["Сумма, GC"] = "Amount, GC", ["Например, 1,25"] = "For example, 1.25", ["Пароль кошелька"] = "Wallet password",
+        ["Комиссия рассчитается автоматически. Отправленную транзакцию нельзя отменить."] = "The fee is calculated automatically. A sent transaction cannot be reversed.", ["Проверить и отправить"] = "Review and send",
+        ["Выберите существующий адрес или создайте новый. Покажите его отправителю или дайте отсканировать QR-код."] = "Choose an existing address or create a new one. Share it with the sender or let them scan the QR code.",
+        ["АДРЕС ДЛЯ ПОЛУЧЕНИЯ"] = "RECEIVE ADDRESS", ["Новый адрес появится здесь"] = "A new address will appear here", ["В кошельке пока нет адреса"] = "This wallet has no address yet",
+        ["Создать новый адрес"] = "Create new address", ["Копировать адрес"] = "Copy address", ["QR содержит только адрес"] = "QR code contains the address only",
+        ["Адрес создан. Его можно скопировать или отсканировать QR-код."] = "Address created. Copy it or scan the QR code.", ["Адрес скопирован. Теперь его можно отправить отправителю."] = "Address copied. You can now share it with the sender.",
+        ["Загружаю адреса текущего кошелька…"] = "Loading addresses from this wallet…", ["Выберите адрес для перевода или создайте новый. QR-код содержит только адрес."] = "Choose an address or create one. The QR code contains the address only.",
+        ["В кошельке нет адресов. Создайте новый адрес для получения монет."] = "This wallet has no addresses. Create one to receive coins.", ["Не удалось загрузить адреса кошелька: "] = "Could not load wallet addresses: ",
+        ["История входящих переводов, отправок и наград за майнинг."] = "History of received and sent transfers and mining rewards.", ["Обновить"] = "Refresh",
+        ["Дата"] = "Date", ["Операция"] = "Operation", ["Сумма"] = "Amount", ["Комиссия"] = "Fee", ["Состояние"] = "Status", ["Адрес"] = "Address",
+        ["Получение"] = "Received", ["Отправка"] = "Sent", ["Награда"] = "Reward", ["Отменена"] = "Reversed", ["Ожидает зрелости"] = "Immature", ["Ожидает"] = "Pending",
+        ["Выберите запись, чтобы посмотреть номер транзакции."] = "Select a record to view its transaction ID.", ["Копировать ID"] = "Copy ID", ["Обновляю историю кошелька…"] = "Updating wallet history…",
+        ["Создайте или импортируйте кошелёк, чтобы увидеть историю."] = "Create or import a wallet to view its history.", ["Не удалось загрузить историю: "] = "Could not load history: ",
+        ["Резервная копия сохраняет весь кошелёк. Приватный ключ относится только к одному адресу."] = "A backup saves the full wallet. A private key applies to one address only.",
+        ["Полная копия кошелька"] = "Full wallet backup", ["Файл .dat включает весь текущий кошелёк и подходит для его восстановления."] = "The .dat file contains the whole wallet and can restore it.",
+        ["Приватный ключ одного адреса"] = "Private key for one address", ["В GeoCoin нет мнемонической фразы. Приватный ключ из 64 hex-символов открывает один адрес."] = "GeoCoin has no recovery phrase. A 64-character hexadecimal private key unlocks one address.",
+        ["Адрес для экспорта ключа"] = "Address to export", ["Сохранить ключ выбранного адреса"] = "Save key for selected address", ["Импорт ключа в текущий кошелёк"] = "Import key into this wallet",
+        ["64 шестнадцатеричных символа"] = "64 hexadecimal characters", ["Импортировать ключ"] = "Import key",
+        ["Ключи — секретные данные. Не отправляйте их другим людям и не храните в общедоступных файлах."] = "Keys are secret. Do not share them or store them in public files.",
+        ["Синхронизация завершена"] = "Synchronization complete", ["Нода остановлена"] = "Node stopped", ["Нода не запущена"] = "Node is not running",
+        ["Синхронизация"] = "Synchronizing", ["Нода завершилась"] = "Node exited", ["Нода запускается…"] = "Node is starting…", ["Подключаю GPU к удалённой ноде…"] = "Connecting GPU to remote node…",
+        ["Подключаюсь к сети GeoCoin…"] = "Connecting to the GeoCoin network…",
+        ["Локальная нода остановлена · работает режим подмайнера"] = "Local node stopped · subminer is running", ["RPC отвечает"] = "RPC is responding",
+        ["Процесс запущен · проверяю RPC…"] = "Process started · checking RPC…", ["RPC не запущен"] = "RPC is not running", ["Сеть: —"] = "Network: —",
+        ["Не удалось проверить видеокарту."] = "Could not check the GPU.", ["GPU-майнер не найден. Переустановите GeoCoin-Start."] = "GPU miner not found. Reinstall GeoCoin-Start.",
+        ["GPU-майнинг работает"] = "GPU mining is running", ["GPU-подмайнер остановлен."] = "GPU subminer stopped.", ["GPU-майнинг остановлен."] = "GPU mining stopped.",
+        ["Не удалось запустить GPU-майнинг: "] = "Could not start GPU mining: ", ["Не удалось подключиться: "] = "Could not connect: ",
+        ["Проверяю miner RPC и адрес награды…"] = "Checking miner RPC and reward address…", ["Подготавливаю подключение к удалённой ноде…"] = "Preparing connection to remote node…",
+        ["Не удалось загрузить адреса: "] = "Could not load addresses: ", ["Не удалось импортировать ключ: "] = "Could not import key: ",
+        ["Не удалось экспортировать ключ: "] = "Could not export key: ", ["В кошельке нет доступных адресов."] = "No available addresses in this wallet.",
+        ["Ключ добавлен. История адреса восстановлена."] = "Key imported. Address history restored.",
+        ["Адреса появятся после запуска ноды и открытия кошелька."] = "Addresses will appear after the node starts and the wallet is opened.",
+        ["Совместимая видеокарта не найдена. Проверьте драйверы."] = "No compatible GPU found. Check the drivers.",
+        ["Кошелёк создан. Сейчас сделайте резервную копию на странице «Обзор»."] = "Wallet created. Make a backup on the Overview page now.",
+        ["Проверьте ключ: нужно ровно 64 шестнадцатеричных символа 0–9, A–F."] = "Check the key: it must contain exactly 64 hexadecimal characters, 0–9 or A–F.",
+        ["Ключ сохранён в выбранный файл. Храните его отдельно и никому не передавайте."] = "Key saved to the selected file. Store it separately and do not share it.",
+        ["Ключ сохранён"] = "Key saved", ["Не удалось создать адрес"] = "Could not create address",
+        ["В истории пока нет операций. После синхронизации обновите список."] = "No transactions yet. Refresh the list after synchronization.",
+        ["Проверьте адрес получателя."] = "Check the recipient address.", ["Сумма может содержать не больше 8 знаков после запятой."] = "The amount can have no more than 8 decimal places.",
+        ["Введите пароль кошелька."] = "Enter the wallet password.", ["Отправляю перевод…"] = "Sending transfer…",
+        ["ID транзакции скопирован."] = "Transaction ID copied.", ["Не удалось скопировать ID: "] = "Could not copy ID: ",
+        ["Сегодня: "] = "Today: ", ["Текущая сессия: "] = "Current session: ", ["Последняя сессия: "] = "Last session: ", ["Сессия: "] = "Session: ",
+        ["Блоков: "] = "Blocks: ", ["Узлов сети: "] = "Network peers: ", ["подключений: "] = "connections: ", ["Скорость: "] = "Hashrate: ",
+        ["Ожидает данных…"] = "Waiting for data…", ["Остановить подмайнер"] = "Stop subminer", ["Не удалось создать адрес: "] = "Could not create address: ",
+        ["Адрес скопирован"] = "Address copied", ["Зрелые монеты"] = "Mature coins", ["Незрелые монеты"] = "Immature coins"
+    };
+    private static readonly Dictionary<string, string> EnglishToRussian = RussianToEnglish
+        .GroupBy(entry => entry.Value, StringComparer.Ordinal)
+        .ToDictionary(group => group.Key, group => group.First().Key, StringComparer.Ordinal);
 
     private readonly Panel _pagePanel = new();
     private readonly Panel _headerPanel = new();
     private readonly Label _pageTitle = new();
     private readonly Label _statusLabel = new();
+    private readonly ComboBox _languageCombo = new();
+    private readonly Button _themeButton = new();
     private readonly Label _balanceValue = new();
     private readonly Label _walletAddress = new();
     private readonly Label _nodeState = new();
@@ -49,12 +179,17 @@ internal sealed class MainForm : Form
     private readonly Label _nodeProfileHint = new();
     private readonly Label _minedBlocksTodayLabel = new();
     private readonly Label _minedBlocksSessionLabel = new();
+    private readonly Label _lifetimeMinedBlocksLabel = new();
+    private readonly Label _matureCoinsLabel = new();
+    private readonly Label _immatureCoinsLabel = new();
     private readonly TextBox _nodeLogBox = new();
     private readonly NumericUpDown _threadCount = new();
     private readonly ComboBox _gpuDeviceCombo = new();
     private readonly ComboBox _remoteGpuDeviceCombo = new();
     private readonly ComboBox _rpcBindCombo = new();
     private readonly ComboBox _walletAddressCombo = new();
+    private readonly ComboBox _receiveAddressCombo = new();
+    private readonly PictureBox _receiveQrCode = new();
     private readonly Button _refreshGpuButton = new();
     private readonly Button _refreshTransactionsButton = new();
     private readonly Button _copyTransactionIdButton = new();
@@ -89,11 +224,14 @@ internal sealed class MainForm : Form
     private readonly Button _gpuMineButton = new();
     private readonly Button _sendButton = new();
     private readonly Button _receiveButton = new();
+    private readonly Button _receiveCopyButton = new();
     private readonly Button[] _navigation = new Button[8];
     private readonly System.Windows.Forms.Timer _refreshTimer = new() { Interval = 4000 };
     private readonly object _minedBlocksLock = new();
     private readonly List<MinedBlockRecord> _minedBlockRecords = new();
     private readonly HashSet<string> _miningSessionBlockIds = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _lifetimeMinedBlockIds = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, string> _minedBlockIdByTransactionId = new(StringComparer.OrdinalIgnoreCase);
 
     private GeoCoinRpcClient? _rpc;
     private GeoCoinRpcClient? _minerRpc;
@@ -112,6 +250,8 @@ internal sealed class MainForm : Form
     private string _currentPage = "overview";
     private string _nodeStatus = "Нода остановлена";
     private decimal _balance;
+    private decimal _matureCoins;
+    private decimal _immatureCoins;
     private long _height;
     private long _headers;
     private int _connections;
@@ -129,20 +269,26 @@ internal sealed class MainForm : Form
     private bool _gpuDevicesScanned;
     private bool _loadingTransactions;
     private bool _loadingWalletAddresses;
+    private bool _loadingReceiveAddresses;
+    private bool _walletHistoryBackfilled;
     private double _cpuHashrateValue;
     private string _gpuHashrateText = "Скорость: —";
     private string _gpuStatusText = "GPU-майнинг остановлен";
+    private string? _gpuLastError;
     private readonly List<GpuDevice> _gpuDevices = new();
     private readonly List<string> _walletAddresses = new();
     private string? _selectedTransactionId;
     private bool _refreshing;
     private bool _allowClose;
     private bool _closePromptOpen;
+    private bool _darkTheme;
+    private bool _englishUi;
     private int _lastPageViewportWidth;
     private int _selectedThreads = Math.Max(1, Environment.ProcessorCount / 2);
 
     public MainForm()
     {
+        LoadUiPreferences();
         Text = "GeoCoin-Start — простой кошелёк";
         Icon = Icon.ExtractAssociatedIcon(Environment.ProcessPath ?? "") ?? SystemIcons.Application;
         StartPosition = FormStartPosition.CenterScreen;
@@ -157,6 +303,7 @@ internal sealed class MainForm : Form
 
         LoadMinedBlockRecords();
         BuildShell();
+        ApplyThemeToTree(this);
         _nodeButton.Click += async (_, _) =>
         {
             if (IsNodeRunning()) await StopNodeAsync();
@@ -202,8 +349,15 @@ internal sealed class MainForm : Form
             if (_walletKeyExportButton.IsHandleCreated)
                 _walletKeyExportButton.Enabled = IsNodeRunning() && _walletAddressCombo.SelectedItem is string;
         };
+        _receiveAddressCombo.SelectedIndexChanged += (_, _) =>
+        {
+            if (_loadingReceiveAddresses || _receiveAddressCombo.SelectedItem is not string address) return;
+            _lastAddress = address;
+            UpdateReceiveAddressDisplay();
+        };
         _sendButton.Click += async (_, _) => await SendAsync();
         _receiveButton.Click += async (_, _) => await CreateReceiveAddressAsync();
+        _receiveCopyButton.Click += (_, _) => CopyReceiveAddress();
         _refreshTransactionsButton.Click += async (_, _) => await RefreshTransactionsAsync();
         _copyTransactionIdButton.Click += (_, _) => CopySelectedTransactionId();
         _walletFileExportButton.Click += async (_, _) => await BackupWalletAsync();
@@ -216,6 +370,7 @@ internal sealed class MainForm : Form
             await RefreshStateAsync();
             if (_currentPage == "node") UpdateNodePage();
             UpdateMinedBlockCounters();
+            ApplyUiLanguage(this);
         };
         _refreshTimer.Start();
         Shown += (_, _) => FitWindowToScreen();
@@ -250,7 +405,7 @@ internal sealed class MainForm : Form
         shell.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         Controls.Add(shell);
 
-        var rail = new Panel { Dock = DockStyle.Fill, Margin = Padding.Empty, BackColor = Rail };
+        var rail = new Panel { Name = "navigationRail", Dock = DockStyle.Fill, Margin = Padding.Empty, BackColor = Rail };
         shell.Controls.Add(rail, 0, 0);
         shell.SetRowSpan(rail, 2);
 
@@ -307,6 +462,7 @@ internal sealed class MainForm : Form
 
         var railFooter = new Panel
         {
+            Name = "railFooter",
             Dock = DockStyle.Bottom,
             Height = ScaleUi(62),
             BackColor = Rail
@@ -357,6 +513,38 @@ internal sealed class MainForm : Form
             Font = new Font("Segoe UI", 9.5f)
         });
 
+        _languageCombo.DropDownStyle = ComboBoxStyle.DropDownList;
+        _languageCombo.Items.AddRange(new object[] { "Русский", "English" });
+        _languageCombo.SelectedIndex = _englishUi ? 1 : 0;
+        _languageCombo.Font = new Font("Segoe UI", 9);
+        _languageCombo.Size = UiSize(112, 28);
+        _languageCombo.Location = UiPoint(0, 8);
+        _headerPanel.Controls.Add(_languageCombo);
+        _languageCombo.SelectedIndexChanged += (_, _) =>
+        {
+            bool english = _languageCombo.SelectedIndex == 1;
+            if (_englishUi == english) return;
+            _englishUi = english;
+            SaveUiPreferences();
+            BuildPage();
+            ApplyUiLanguage(this);
+            UpdateStatus();
+        };
+
+        StyleSecondaryButton(_themeButton, new Point(0, 8), new Size(112, 28));
+        _themeButton.Click += (_, _) =>
+        {
+            _darkTheme = !_darkTheme;
+            SaveUiPreferences();
+            BuildPage();
+            UpdatePreferenceControlText();
+            ApplyThemeToTree(this);
+            ApplyUiLanguage(this);
+            UpdateStatus();
+        };
+        _headerPanel.Controls.Add(_themeButton);
+        UpdatePreferenceControlText();
+
         _statusLabel.Size = UiSize(292, 34);
         _statusLabel.TextAlign = ContentAlignment.MiddleCenter;
         _statusLabel.Font = new Font("Segoe UI Semibold", 9, FontStyle.Bold);
@@ -380,7 +568,12 @@ internal sealed class MainForm : Form
         if (_statusLabel.IsDisposed || _headerPanel.IsDisposed) return;
         int margin = ScaleUi(34);
         int width = _statusLabel.Width > 0 ? _statusLabel.Width : ScaleUi(292);
-        _statusLabel.Location = new Point(Math.Max(margin, _headerPanel.ClientSize.Width - margin - width), ScaleUi(36));
+        int themeWidth = ScaleUi(112);
+        int controlGap = ScaleUi(8);
+        int right = _headerPanel.ClientSize.Width - margin;
+        _themeButton.Location = new Point(Math.Max(margin, right - themeWidth), ScaleUi(8));
+        _languageCombo.Location = new Point(Math.Max(margin, right - themeWidth - controlGap - ScaleUi(112)), ScaleUi(8));
+        _statusLabel.Location = new Point(Math.Max(margin, right - width), ScaleUi(43));
     }
 
     private void RefreshPageLayoutForWidth()
@@ -437,7 +630,9 @@ internal sealed class MainForm : Form
         for (int i = 0; i < _navigation.Length; i++)
         {
             bool selected = pages[i] == page;
-            _navigation[i].BackColor = selected ? Color.FromArgb(44, 59, 48) : Rail;
+            _navigation[i].BackColor = selected
+                ? (_darkTheme ? Color.FromArgb(48, 61, 52) : Color.FromArgb(44, 59, 48))
+                : Rail;
             _navigation[i].ForeColor = selected ? Color.FromArgb(241, 218, 173) : Color.FromArgb(206, 215, 205);
         }
         BuildPage();
@@ -445,9 +640,12 @@ internal sealed class MainForm : Form
             _ = RefreshTransactionsAsync();
         if (page == "wallet" && IsNodeRunning() && File.Exists(AppPaths.WalletPath))
             _ = RefreshWalletAddressesAsync();
+        if (page == "receive" && IsNodeRunning() && File.Exists(AppPaths.WalletPath))
+            _ = RefreshReceiveAddressesAsync();
         if ((page == "mining" || page == "subminer") && !_gpuDevicesScanned && !_checkingGpuDevices && File.Exists(AppPaths.GpuMinerPath))
             _ = RefreshGpuDevicesAsync();
         if (page == "node") UpdateNodePage();
+        ApplyUiLanguage(this);
     }
 
     private void BuildPage()
@@ -467,6 +665,8 @@ internal sealed class MainForm : Form
             default: BuildOverviewPage(); break;
         }
         _pagePanel.ResumeLayout();
+        ApplyThemeToTree(this);
+        ApplyUiLanguage(this);
         UpdateStatus();
     }
 
@@ -504,26 +704,43 @@ internal sealed class MainForm : Form
         _peerState.ForeColor = Muted;
         networkCard.Controls.Add(_peerState);
 
+        Panel miningSummary = AddCard(22, 412, cardWidth, 120);
+        AddLabel(miningSummary, "ДОБЫЧА И НАГРАДЫ", 24, 17, 260, 20, Muted, 9, bold: true);
+        _lifetimeMinedBlocksLabel.Location = UiPoint(24, 47);
+        _lifetimeMinedBlocksLabel.Size = UiSize(cardWidth - 60, 24);
+        _lifetimeMinedBlocksLabel.Font = new Font("Segoe UI Semibold", 11, FontStyle.Bold);
+        _lifetimeMinedBlocksLabel.ForeColor = Ink;
+        miningSummary.Controls.Add(_lifetimeMinedBlocksLabel);
+        _matureCoinsLabel.Location = UiPoint(24, 80);
+        _matureCoinsLabel.Size = UiSize(Math.Max(220, cardWidth / 2 - 32), 22);
+        _matureCoinsLabel.ForeColor = Muted;
+        miningSummary.Controls.Add(_matureCoinsLabel);
+        _immatureCoinsLabel.Location = UiPoint(Math.Max(250, cardWidth / 2), 80);
+        _immatureCoinsLabel.Size = UiSize(Math.Max(220, cardWidth / 2 - 32), 22);
+        _immatureCoinsLabel.ForeColor = Muted;
+        miningSummary.Controls.Add(_immatureCoinsLabel);
+        UpdateOverviewMiningSummary();
+
         _nodeButton.Text = _startingNode ? "Запускаю ноду…" : !IsNodeProcessRunning() ? "Запустить ноду" : "Остановить ноду";
-        StylePrimaryButton(_nodeButton, new Point(22, 416), new Size(192, 42));
+        StylePrimaryButton(_nodeButton, new Point(22, 550), new Size(192, 42));
         _nodeButton.Enabled = !_remoteGpuMining && !_startingRemoteGpu && !_startingNode;
         _pagePanel.Controls.Add(_nodeButton);
 
         bool hasWallet = File.Exists(AppPaths.WalletPath);
         _walletButton.Text = hasWallet ? "Экспортировать кошелёк (.dat)" : "Создать кошелёк";
-        StyleSecondaryButton(_walletButton, new Point(232, 416), new Size(230, 42));
+        StyleSecondaryButton(_walletButton, new Point(232, 550), new Size(230, 42));
         _walletButton.Enabled = IsNodeRunning();
         _pagePanel.Controls.Add(_walletButton);
 
         _walletRestoreButton.Text = hasWallet ? "Импортировать другой" : "Импортировать кошелёк";
-        StyleSecondaryButton(_walletRestoreButton, new Point(232, 468), new Size(230, 42));
+        StyleSecondaryButton(_walletRestoreButton, new Point(232, 600), new Size(230, 42));
         _walletRestoreButton.Enabled = IsNodeRunning();
         _pagePanel.Controls.Add(_walletRestoreButton);
 
         _overviewHint.Text = File.Exists(AppPaths.WalletPath)
             ? "Сделайте резервную копию кошелька и храните её отдельно от компьютера."
             : "Создайте кошелёк или импортируйте существующий файл GeoCoin. Пароль хранится только у вас.";
-        _overviewHint.Location = UiPoint(24, 524);
+        _overviewHint.Location = UiPoint(24, 658);
         _overviewHint.Size = UiSize(cardWidth - 24, 44);
         _overviewHint.ForeColor = Muted;
         _pagePanel.Controls.Add(_overviewHint);
@@ -563,7 +780,7 @@ internal sealed class MainForm : Form
             : "CPU-майнинг остановлен";
         _miningState.Location = UiPoint(24, 120);
         _miningState.AutoSize = true;
-        _miningState.ForeColor = _cpuMiningActive ? Color.FromArgb(53, 119, 74) : Muted;
+        _miningState.ForeColor = _cpuMiningActive ? Success : Muted;
         card.Controls.Add(_miningState);
         _cpuHashrate.Text = _cpuMiningActive
             ? $"Скорость CPU: {FormatHashrate(_cpuHashrateValue)}"
@@ -582,7 +799,7 @@ internal sealed class MainForm : Form
         {
             Location = UiPoint(24, 232),
             Size = UiSize(cardWidth - 48, 1),
-            BackColor = Color.FromArgb(220, 220, 214)
+            BackColor = Divider
         };
         card.Controls.Add(divider);
 
@@ -609,7 +826,7 @@ internal sealed class MainForm : Form
         _gpuMiningState.Text = _gpuStatusText;
         _gpuMiningState.Location = UiPoint(24, 358);
         _gpuMiningState.AutoSize = true;
-        _gpuMiningState.ForeColor = _gpuMiningActive ? Color.FromArgb(53, 119, 74) : Muted;
+        _gpuMiningState.ForeColor = _gpuMiningActive ? Success : Muted;
         card.Controls.Add(_gpuMiningState);
         _miningHashrate.Text = _gpuHashrateText;
         _miningHashrate.Location = UiPoint(24, 383);
@@ -671,7 +888,7 @@ internal sealed class MainForm : Form
         _rpcBindCombo.DropDownStyle = ComboBoxStyle.DropDownList;
         _rpcBindCombo.SelectedIndexChanged -= RpcBindComboSelectedIndexChanged;
         _rpcBindCombo.Items.Clear();
-        _rpcBindCombo.Items.Add("127.0.0.1 · только этот компьютер");
+        _rpcBindCombo.Items.Add(_englishUi ? "127.0.0.1 · this computer only" : "127.0.0.1 · только этот компьютер");
         foreach (string address in GetPrivateIpv4Addresses()) _rpcBindCombo.Items.Add(address);
         int bindIndex = 0;
         for (int i = 1; i < _rpcBindCombo.Items.Count; i++)
@@ -785,7 +1002,7 @@ internal sealed class MainForm : Form
         _gpuMiningState.Text = _gpuStatusText;
         _gpuMiningState.Location = UiPoint(22, 402);
         _gpuMiningState.AutoSize = true;
-        _gpuMiningState.ForeColor = _remoteGpuMining ? Color.FromArgb(53, 119, 74) : Muted;
+        _gpuMiningState.ForeColor = _remoteGpuMining ? Success : Muted;
         card.Controls.Add(_gpuMiningState);
         _miningHashrate.Text = _gpuHashrateText;
         _miningHashrate.Location = UiPoint(330, 402);
@@ -820,9 +1037,9 @@ internal sealed class MainForm : Form
             ? _nodeStatus
             : (_startingNode ? "Нода запускается…" : _startingRemoteGpu ? "Подключаю GPU к удалённой ноде…" :
                 _remoteGpuMining ? "Локальная нода остановлена · работает режим подмайнера" : "Нода остановлена");
-        _nodeProcessStatus.ForeColor = running ? Color.FromArgb(53, 119, 74) : Muted;
+        _nodeProcessStatus.ForeColor = running ? Success : Muted;
         _nodeRpcStatus.Text = running ? (_rpcHealthy ? "RPC отвечает" : "Процесс запущен · проверяю RPC…") : "RPC не запущен";
-        _nodeRpcStatus.ForeColor = _rpcHealthy ? Color.FromArgb(53, 119, 74) : Muted;
+        _nodeRpcStatus.ForeColor = _rpcHealthy ? Success : Muted;
         _nodePeerStatus.Text = running ? $"Блоков: {_height:N0} · подключений: {_connections}" : "Сеть: —";
         string runTime = "";
         if (_nodeProcess is { } process && IsNodeProcessRunning())
@@ -950,37 +1167,64 @@ internal sealed class MainForm : Form
     private void BuildReceivePage()
     {
         int cardWidth = PageCardWidth(700);
-        int fieldWidth = cardWidth - 60;
-        AddParagraph("Создайте новый адрес для получения монет и отправьте его человеку, который переводит вам GeoCoin.", 22, 12, cardWidth, 48);
-        Panel card = AddCard(22, 78, cardWidth, 286);
-        AddLabel(card, "ВАШ АДРЕС ДЛЯ ПОЛУЧЕНИЯ", 26, 22, fieldWidth, 22, Muted, 9, bold: true);
-        _receiveAddress.Text = string.IsNullOrWhiteSpace(_lastAddress) ? "Новый адрес появится здесь" : _lastAddress;
-        _receiveAddress.Location = UiPoint(26, 59);
-        _receiveAddress.Size = UiSize(fieldWidth, 70);
+        bool compact = cardWidth < 650;
+        int addressWidth = Math.Max(220, cardWidth - 260);
+        AddParagraph("Выберите существующий адрес или создайте новый. Покажите его отправителю или дайте отсканировать QR-код.", 22, 12, cardWidth, 48);
+        Panel card = AddCard(22, 78, cardWidth, 322);
+        AddLabel(card, "АДРЕС ДЛЯ ПОЛУЧЕНИЯ", 26, 20, addressWidth, 22, Muted, 9, bold: true);
+        _receiveAddressCombo.DropDownStyle = ComboBoxStyle.DropDownList;
+        _receiveAddressCombo.Location = UiPoint(26, 50);
+        _receiveAddressCombo.Size = UiSize(addressWidth, 34);
+        _receiveAddressCombo.Font = new Font("Segoe UI", 9.5f);
+        _receiveAddressCombo.Enabled = !_loadingReceiveAddresses && IsNodeRunning() && File.Exists(AppPaths.WalletPath);
+        card.Controls.Add(_receiveAddressCombo);
+
+        _receiveAddress.Location = UiPoint(26, 96);
+        _receiveAddress.Size = UiSize(addressWidth, 60);
         _receiveAddress.AutoEllipsis = true;
         _receiveAddress.ForeColor = Ink;
-        _receiveAddress.Font = new Font("Segoe UI Semibold", 12, FontStyle.Bold);
+        _receiveAddress.Font = new Font("Segoe UI Semibold", 10.5f, FontStyle.Bold);
         _receiveAddress.TextAlign = ContentAlignment.MiddleLeft;
         card.Controls.Add(_receiveAddress);
 
-        _receiveButton.Text = "Создать адрес";
-        StylePrimaryButton(_receiveButton, new Point(26, 152), new Size(180, 42));
+        _receiveButton.Text = "Создать новый адрес";
+        StylePrimaryButton(_receiveButton, new Point(26, 168), new Size(190, 42));
         _receiveButton.Enabled = IsNodeRunning() && File.Exists(AppPaths.WalletPath);
         card.Controls.Add(_receiveButton);
 
-        var copy = new Button { Text = "Копировать адрес", Location = new Point(222, 152), Size = new Size(180, 42) };
-        StyleSecondaryButton(copy, copy.Location, copy.Size);
-        copy.Click += (_, _) => CopyReceiveAddress();
-        card.Controls.Add(copy);
+        _receiveCopyButton.Text = "Копировать адрес";
+        StyleSecondaryButton(_receiveCopyButton,
+            UiPoint(compact ? 26 : 230, compact ? 218 : 168), UiSize(180, 42));
+        _receiveCopyButton.Enabled = !string.IsNullOrWhiteSpace(_lastAddress);
+        card.Controls.Add(_receiveCopyButton);
 
-        _receiveMessage.Text = "Новый адрес можно использовать для одного или нескольких переводов.";
-        _receiveMessage.Location = UiPoint(26, 219);
-        _receiveMessage.Size = UiSize(fieldWidth, 32);
+        _receiveMessage.Text = IsNodeRunning() && File.Exists(AppPaths.WalletPath)
+            ? "Загружаю адреса текущего кошелька…"
+            : "Адреса появятся после запуска ноды и открытия кошелька.";
+        _receiveMessage.Location = UiPoint(26, compact ? 270 : 226);
+        _receiveMessage.Size = UiSize(addressWidth, compact ? 42 : 54);
         _receiveMessage.ForeColor = Muted;
         card.Controls.Add(_receiveMessage);
 
-        if (!IsNodeRunning()) AddParagraph("Сначала запустите ноду на странице «Обзор».", 24, 394, cardWidth - 48, 32);
-        else if (!File.Exists(AppPaths.WalletPath)) AddParagraph("Сначала создайте кошелёк на странице «Обзор».", 24, 394, cardWidth - 48, 32);
+        _receiveQrCode.Location = UiPoint(cardWidth - 190, 54);
+        _receiveQrCode.Size = UiSize(150, 150);
+        _receiveQrCode.SizeMode = PictureBoxSizeMode.Zoom;
+        _receiveQrCode.BackColor = Color.White;
+        card.Controls.Add(_receiveQrCode);
+        var qrCaption = new Label
+        {
+            Text = "QR содержит только адрес",
+            Location = UiPoint(cardWidth - 196, 211),
+            Size = UiSize(162, 38),
+            TextAlign = ContentAlignment.TopCenter,
+            ForeColor = Muted,
+            Font = new Font("Segoe UI", 8.5f)
+        };
+        card.Controls.Add(qrCaption);
+
+        if (!IsNodeRunning()) AddParagraph("Сначала запустите ноду на странице «Обзор».", 24, 422, cardWidth - 48, 32);
+        else if (!File.Exists(AppPaths.WalletPath)) AddParagraph("Сначала создайте или импортируйте кошелёк на странице «Обзор».", 24, 422, cardWidth - 48, 32);
+        UpdateReceiveAddressDisplay();
     }
 
     private void BuildTransactionsPage()
@@ -1074,7 +1318,7 @@ internal sealed class MainForm : Form
         {
             Location = UiPoint(24, 145),
             Size = UiSize(contentWidth, 1),
-            BackColor = Color.FromArgb(220, 220, 214)
+            BackColor = Divider
         };
         card.Controls.Add(divider);
 
@@ -1350,6 +1594,7 @@ internal sealed class MainForm : Form
         {
             JsonElement result = await _rpc.CallAsync("createwallet", new[] { password });
             _lastAddress = result.TryGetProperty("address", out JsonElement address) ? address.GetString() : null;
+            ResetWalletHistoryBackfill();
             _receiveMessage.Text = "Кошелёк создан. Сейчас сделайте резервную копию на странице «Обзор».";
             MessageBox.Show(this,
                 "Кошелёк создан и защищён паролем.\n\n" +
@@ -1452,6 +1697,7 @@ internal sealed class MainForm : Form
             await StartNodeAsync(offerWalletCreation: false, suppliedWalletPassword: sourcePassword);
             if (!IsNodeRunning()) throw new InvalidOperationException("GeoCoin не смог открыть этот файл. Проверьте пароль и выберите файл кошелька из оригинального клиента.");
             imported = true;
+            ResetWalletHistoryBackfill();
             await RefreshStateAsync();
             MessageBox.Show(this,
                 "Кошелёк импортирован и открыт. Исходный файл не изменён. История операций будет синхронизирована с сетью.",
@@ -1656,6 +1902,7 @@ internal sealed class MainForm : Form
         if (MessageBox.Show(this, warning, "Начать GPU-майнинг", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
             return;
 
+        _gpuLastError = null;
         try
         {
             string address = await GetExistingMiningAddressAsync();
@@ -1682,7 +1929,7 @@ internal sealed class MainForm : Form
 
             var miner = new Process { StartInfo = start, EnableRaisingEvents = true };
             miner.OutputDataReceived += (_, e) => HandleGpuMinerLine(e.Data, remote: false);
-            miner.ErrorDataReceived += (_, e) => WriteNodeLog("[GPU] " + e.Data);
+            miner.ErrorDataReceived += (_, e) => HandleGpuMinerErrorLine(e.Data, remote: false);
             miner.Exited += (_, _) =>
             {
                 try
@@ -1696,7 +1943,9 @@ internal sealed class MainForm : Form
                         _remoteGpuMining = false;
                         UpdateMiningSessionState();
                         DeleteRemoteMinerPassFile();
-                        _gpuStatusText = "GPU-майнинг завершён.";
+                        int exitCode = 0;
+                        try { exitCode = miner.ExitCode; } catch { }
+                        _gpuStatusText = DescribeGpuMinerExit(exitCode, remote: false);
                         _gpuHashrateText = "Скорость GPU: —";
                         if (!IsDisposed && (_currentPage == "mining" || _currentPage == "subminer")) BuildPage();
                         if (!IsDisposed && _currentPage == "node") UpdateNodePage();
@@ -1722,6 +1971,8 @@ internal sealed class MainForm : Form
         }
         catch (Exception ex)
         {
+            _gpuLastError = ex.Message;
+            _gpuStatusText = "Не удалось запустить GPU-майнинг: " + ex.Message;
             MessageBox.Show(this, ex.Message, "Не удалось запустить GPU-майнинг", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
     }
@@ -1783,11 +2034,23 @@ internal sealed class MainForm : Form
             return;
 
         string? passFile = null;
+        _gpuLastError = null;
         _startingRemoteGpu = true;
-        _gpuStatusText = "Подготавливаю подключение к удалённой ноде…";
+        _gpuStatusText = "Проверяю miner RPC и адрес награды…";
         BuildPage();
         try
         {
+            using (var rpcCheck = new GeoCoinRpcClient(username, password, endpoint.ToString()))
+            {
+                JsonElement template = await rpcCheck.CallAsync("getblocktemplate", new object[]
+                {
+                    new Dictionary<string, string> { ["address"] = address }
+                });
+                if (template.ValueKind != JsonValueKind.Object || !template.TryGetProperty("blockhex", out _))
+                    throw new InvalidOperationException("Нода не вернула шаблон блока. Проверьте синхронизацию ноды и miner RPC-доступ.");
+            }
+
+            _gpuStatusText = "Подготавливаю подключение к удалённой ноде…";
             string tempDirectory = Path.Combine(Path.GetTempPath(), "geocoin-start-worker-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(tempDirectory);
             passFile = Path.Combine(tempDirectory, "rpc-miner.pass");
@@ -1814,7 +2077,7 @@ internal sealed class MainForm : Form
 
             var miner = new Process { StartInfo = start, EnableRaisingEvents = true };
             miner.OutputDataReceived += (_, e) => HandleGpuMinerLine(e.Data, remote: true);
-            miner.ErrorDataReceived += (_, e) => WriteNodeLog("[GPU-подмайнер] " + e.Data);
+            miner.ErrorDataReceived += (_, e) => HandleGpuMinerErrorLine(e.Data, remote: true);
             miner.Exited += (_, _) =>
             {
                 try
@@ -1828,7 +2091,9 @@ internal sealed class MainForm : Form
                         _remoteGpuMining = false;
                         UpdateMiningSessionState();
                         DeleteRemoteMinerPassFile();
-                        _gpuStatusText = "GPU-подмайнер отключён.";
+                        int exitCode = 0;
+                        try { exitCode = miner.ExitCode; } catch { }
+                        _gpuStatusText = DescribeGpuMinerExit(exitCode, remote: true);
                         _gpuHashrateText = "Скорость GPU: —";
                         if (!IsDisposed && (_currentPage == "subminer" || _currentPage == "mining")) BuildPage();
                         if (!IsDisposed && _currentPage == "node") UpdateNodePage();
@@ -1859,6 +2124,8 @@ internal sealed class MainForm : Form
         }
         catch (Exception ex)
         {
+            _gpuLastError = ex.Message;
+            _gpuStatusText = "Не удалось подключиться: " + ex.Message;
             if (passFile is not null)
             {
                 try { Directory.Delete(Path.GetDirectoryName(passFile)!, recursive: true); } catch { }
@@ -1899,6 +2166,34 @@ internal sealed class MainForm : Form
         return _lastAddress;
     }
 
+    private void HandleGpuMinerErrorLine(string? line, bool remote)
+    {
+        if (string.IsNullOrWhiteSpace(line)) return;
+        string message = line.Trim();
+        string prefix = remote ? "[GPU-подмайнер] " : "[GPU] ";
+        WriteNodeLog(prefix + message);
+        _gpuLastError = message;
+        _gpuStatusText = (remote ? "Ошибка GPU-подмайнера: " : "Ошибка GPU: ") + message;
+        if (IsDisposed || !IsHandleCreated) return;
+        try
+        {
+            BeginInvoke((Action)(() =>
+            {
+                if (_currentPage is "mining" or "subminer") _gpuMiningState.Text = _gpuStatusText;
+            }));
+        }
+        catch (InvalidOperationException) { }
+    }
+
+    private string DescribeGpuMinerExit(int exitCode, bool remote)
+    {
+        string name = remote ? "GPU-подмайнер" : "GPU-майнер";
+        if (exitCode == 0) return remote ? "GPU-подмайнер остановлен." : "GPU-майнинг остановлен.";
+        return string.IsNullOrWhiteSpace(_gpuLastError)
+            ? $"{name} завершился с кодом {exitCode}. Откройте вкладку «Нода», чтобы посмотреть журнал."
+            : $"{name}: {_gpuLastError} (код {exitCode}). Подробности — во вкладке «Нода».";
+    }
+
     private void HandleGpuMinerLine(string? line, bool remote)
     {
         if (string.IsNullOrWhiteSpace(line)) return;
@@ -1923,12 +2218,7 @@ internal sealed class MainForm : Form
             else if (eventName == "error")
             {
                 string message = root.TryGetProperty("message", out JsonElement msg) ? msg.GetString() ?? "Ошибка GPU-майнера" : "Ошибка GPU-майнера";
-                _gpuStatusText = message;
-                WriteNodeLog(($"[{(remote ? "GPU-подмайнер" : "GPU")}] ") + message);
-                if (!IsDisposed && IsHandleCreated) BeginInvoke((Action)(() =>
-                {
-                        if (_currentPage == "mining" || _currentPage == "subminer") _gpuMiningState.Text = message;
-                }));
+                HandleGpuMinerErrorLine(message, remote);
             }
             else if (eventName == "status")
             {
@@ -1974,6 +2264,14 @@ internal sealed class MainForm : Form
             {
                 MinedBlockLedger? ledger = JsonSerializer.Deserialize<MinedBlockLedger>(document.RootElement.GetRawText());
                 records = ledger?.Blocks;
+                if (ledger?.LifetimeBlockIds is not null)
+                    foreach (string blockId in ledger.LifetimeBlockIds.Where(id => !string.IsNullOrWhiteSpace(id)))
+                        _lifetimeMinedBlockIds.Add(blockId);
+                if (ledger?.TransactionToBlockIds is not null)
+                    foreach ((string txid, string blockId) in ledger.TransactionToBlockIds)
+                        if (!string.IsNullOrWhiteSpace(txid) && !string.IsNullOrWhiteSpace(blockId))
+                            _minedBlockIdByTransactionId[txid] = blockId;
+                _walletHistoryBackfilled = ledger?.WalletHistoryBackfilled ?? false;
                 if (ledger?.SessionStartedAtUnix is long sessionStartedAt && sessionStartedAt > 0)
                     _miningSessionStartedAt = DateTimeOffset.FromUnixTimeSeconds(sessionStartedAt);
                 if (ledger?.SessionEndedAtUnix is long sessionEndedAt && sessionEndedAt > 0)
@@ -1993,6 +2291,9 @@ internal sealed class MainForm : Form
                     continue;
                 if (_minedBlockRecords.All(item => !string.Equals(item.BlockId, record.BlockId, StringComparison.OrdinalIgnoreCase)))
                     _minedBlockRecords.Add(record);
+                _lifetimeMinedBlockIds.Add(record.BlockId);
+                if (!string.IsNullOrWhiteSpace(record.TransactionId))
+                    _minedBlockIdByTransactionId[record.TransactionId] = record.BlockId;
             }
         }
         catch (Exception ex)
@@ -2017,26 +2318,7 @@ internal sealed class MainForm : Form
             lock (_minedBlocksLock)
             {
                 foreach (JsonElement entry in result.EnumerateArray())
-                {
-                    string category = ReadString(entry, "category").ToLowerInvariant();
-                    string txid = ReadString(entry, "txid");
-                    string blockId = ReadString(entry, "blockhash");
-
-                    if (category == "orphan")
-                    {
-                        RemoveMinedBlockLocked(blockId, txid);
-                        continue;
-                    }
-                    if (category is not ("immature" or "generate") || string.IsNullOrWhiteSpace(txid))
-                        continue;
-
-                    long timestamp = ReadInt64(entry, "blocktime");
-                    if (timestamp <= 0) timestamp = ReadInt64(entry, "time");
-                    if (timestamp <= 0 || timestamp > now.AddDays(1).ToUnixTimeSeconds()) continue;
-                    if (string.IsNullOrWhiteSpace(blockId)) blockId = txid;
-
-                    UpsertMinedBlockLocked(new MinedBlockRecord(blockId, txid, timestamp, "local-wallet"));
-                }
+                    UpdateMinedBlockFromWalletEntryLocked(entry);
 
                 PruneMinedBlockRecordsLocked();
                 SaveMinedBlockRecordsLocked();
@@ -2047,6 +2329,66 @@ internal sealed class MainForm : Form
         {
             // The node may be starting, the wallet may be unavailable, or RPC may be reconnecting.
         }
+    }
+
+    private async Task RefreshLifetimeWalletMinedBlocksAsync()
+    {
+        GeoCoinRpcClient? rpc = _rpc;
+        if (_walletHistoryBackfilled || rpc is null || !File.Exists(AppPaths.WalletPath)) return;
+
+        try
+        {
+            JsonElement history = await rpc.CallAsync("listsinceblock", new object[] { "", 1, true, true, true });
+            if (!ReferenceEquals(rpc, _rpc) || history.ValueKind != JsonValueKind.Object ||
+                !history.TryGetProperty("transactions", out JsonElement transactions) || transactions.ValueKind != JsonValueKind.Array)
+                return;
+
+            lock (_minedBlocksLock)
+            {
+                foreach (JsonElement entry in transactions.EnumerateArray())
+                    UpdateMinedBlockFromWalletEntryLocked(entry);
+                if (history.TryGetProperty("removed", out JsonElement removed) && removed.ValueKind == JsonValueKind.Array)
+                    foreach (JsonElement entry in removed.EnumerateArray())
+                        RemoveMinedBlockLocked(ReadString(entry, "blockhash"), ReadString(entry, "txid"));
+
+                _walletHistoryBackfilled = true;
+                PruneMinedBlockRecordsLocked();
+                SaveMinedBlockRecordsLocked();
+            }
+            RefreshMinedBlockCountersOnUi();
+        }
+        catch
+        {
+            // Keep retrying after the wallet finishes syncing or RPC becomes available.
+        }
+    }
+
+    private void ResetWalletHistoryBackfill()
+    {
+        lock (_minedBlocksLock)
+        {
+            _walletHistoryBackfilled = false;
+            SaveMinedBlockRecordsLocked();
+        }
+    }
+
+    private void UpdateMinedBlockFromWalletEntryLocked(JsonElement entry)
+    {
+        string category = ReadString(entry, "category").ToLowerInvariant();
+        string txid = ReadString(entry, "txid");
+        string blockId = ReadString(entry, "blockhash");
+        if (category == "orphan")
+        {
+            RemoveMinedBlockLocked(blockId, txid);
+            return;
+        }
+        if (category is not ("immature" or "generate") || string.IsNullOrWhiteSpace(txid)) return;
+
+        long timestamp = ReadInt64(entry, "blocktime");
+        if (timestamp <= 0) timestamp = ReadInt64(entry, "time");
+        if (timestamp <= 0 || timestamp > DateTimeOffset.UtcNow.AddDays(1).ToUnixTimeSeconds()) return;
+        if (string.IsNullOrWhiteSpace(blockId)) blockId = txid;
+        UpsertMinedBlockLocked(new MinedBlockRecord(blockId, txid, timestamp, "local-wallet"));
     }
 
     private void RegisterMinedBlock(MinedBlockRecord record)
@@ -2062,6 +2404,9 @@ internal sealed class MainForm : Form
 
     private void UpsertMinedBlockLocked(MinedBlockRecord record)
     {
+        _lifetimeMinedBlockIds.Add(record.BlockId);
+        if (!string.IsNullOrWhiteSpace(record.TransactionId))
+            _minedBlockIdByTransactionId[record.TransactionId] = record.BlockId;
         int existingIndex = _minedBlockRecords.FindIndex(item =>
             string.Equals(item.BlockId, record.BlockId, StringComparison.OrdinalIgnoreCase));
         if (existingIndex >= 0)
@@ -2093,13 +2438,21 @@ internal sealed class MainForm : Form
 
     private void RemoveMinedBlockLocked(string blockId, string transactionId)
     {
+        var blockIdsToRemove = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (!string.IsNullOrWhiteSpace(blockId)) blockIdsToRemove.Add(blockId);
+        if (!string.IsNullOrWhiteSpace(transactionId) &&
+            _minedBlockIdByTransactionId.TryGetValue(transactionId, out string? mappedBlockId))
+            blockIdsToRemove.Add(mappedBlockId);
         foreach (MinedBlockRecord record in _minedBlockRecords.Where(record =>
                      (!string.IsNullOrWhiteSpace(blockId) && string.Equals(record.BlockId, blockId, StringComparison.OrdinalIgnoreCase)) ||
                      (!string.IsNullOrWhiteSpace(transactionId) && string.Equals(record.TransactionId, transactionId, StringComparison.OrdinalIgnoreCase))).ToArray())
         {
             _minedBlockRecords.Remove(record);
             _miningSessionBlockIds.Remove(record.BlockId);
+            blockIdsToRemove.Add(record.BlockId);
         }
+        foreach (string id in blockIdsToRemove) _lifetimeMinedBlockIds.Remove(id);
+        if (!string.IsNullOrWhiteSpace(transactionId)) _minedBlockIdByTransactionId.Remove(transactionId);
     }
 
     private void UpdateMiningSessionState()
@@ -2145,11 +2498,16 @@ internal sealed class MainForm : Form
         {
             Directory.CreateDirectory(AppPaths.DataRoot);
             tempPath = AppPaths.MinedBlocksPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
-            var ledger = new MinedBlockLedger(
-                _minedBlockRecords.ToList(),
-                _miningSessionStartedAt?.ToUnixTimeSeconds(),
-                _miningSessionEndedAt?.ToUnixTimeSeconds(),
-                _miningSessionBlockIds.ToList());
+            var ledger = new MinedBlockLedger
+            {
+                Blocks = _minedBlockRecords.ToList(),
+                SessionStartedAtUnix = _miningSessionStartedAt?.ToUnixTimeSeconds(),
+                SessionEndedAtUnix = _miningSessionEndedAt?.ToUnixTimeSeconds(),
+                SessionBlockIds = _miningSessionBlockIds.ToList(),
+                LifetimeBlockIds = _lifetimeMinedBlockIds.ToList(),
+                TransactionToBlockIds = new Dictionary<string, string>(_minedBlockIdByTransactionId, StringComparer.OrdinalIgnoreCase),
+                WalletHistoryBackfilled = _walletHistoryBackfilled
+            };
             File.WriteAllText(tempPath, JsonSerializer.Serialize(ledger), new UTF8Encoding(false));
             File.Move(tempPath, AppPaths.MinedBlocksPath, overwrite: true);
         }
@@ -2168,10 +2526,15 @@ internal sealed class MainForm : Form
         if (IsDisposed || !IsHandleCreated) return;
         if (InvokeRequired)
         {
-            try { BeginInvoke((Action)UpdateMinedBlockCounters); } catch (InvalidOperationException) { }
+            try { BeginInvoke((Action)(() =>
+            {
+                UpdateMinedBlockCounters();
+                if (_currentPage == "overview") UpdateOverviewMiningSummary();
+            })); } catch (InvalidOperationException) { }
             return;
         }
         UpdateMinedBlockCounters();
+        if (_currentPage == "overview") UpdateOverviewMiningSummary();
     }
 
     private void UpdateMinedBlockCounters()
@@ -2261,7 +2624,9 @@ internal sealed class MainForm : Form
             var parameters = new object[] { "Получение", password };
             JsonElement result = await _rpc.CallAsync("getnewaddress", parameters);
             _lastAddress = result.ValueKind == JsonValueKind.String ? result.GetString() : result.ToString();
-            _receiveMessage.Text = "Адрес создан. Нажмите «Копировать адрес» и отправьте его отправителю.";
+            await RefreshReceiveAddressesAsync(_lastAddress);
+            _receiveMessage.Text = "Адрес создан. Его можно скопировать или отсканировать QR-код.";
+            UpdateReceiveAddressDisplay();
             BuildPage();
         }
         catch (Exception ex)
@@ -2272,14 +2637,87 @@ internal sealed class MainForm : Form
 
     private void CopyReceiveAddress()
     {
-        if (string.IsNullOrWhiteSpace(_lastAddress))
+        string? address = _receiveAddressCombo.SelectedItem as string ?? _lastAddress;
+        if (string.IsNullOrWhiteSpace(address))
         {
-            MessageBox.Show(this, "Сначала создайте новый адрес.", "Адрес ещё не создан",
+            MessageBox.Show(this, "В текущем кошельке пока нет адресов. Создайте новый адрес.", "Адрес ещё не создан",
                 MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
-        Clipboard.SetText(_lastAddress);
+        _lastAddress = address;
+        Clipboard.SetText(address);
         _receiveMessage.Text = "Адрес скопирован. Теперь его можно отправить отправителю.";
+    }
+
+    private async Task RefreshReceiveAddressesAsync(string? preferredAddress = null)
+    {
+        if (_loadingReceiveAddresses || _rpc is null || _currentPage != "receive" || !File.Exists(AppPaths.WalletPath)) return;
+        _loadingReceiveAddresses = true;
+        _receiveAddressCombo.Enabled = false;
+        _receiveMessage.Text = "Загружаю адреса текущего кошелька…";
+        try
+        {
+            string? previous = preferredAddress ?? _receiveAddressCombo.SelectedItem as string ?? _lastAddress;
+            List<string> addresses = await GetWalletAddressesAsync();
+            if (!string.IsNullOrWhiteSpace(preferredAddress) && !addresses.Contains(preferredAddress, StringComparer.Ordinal))
+                addresses.Add(preferredAddress);
+
+            _receiveAddressCombo.BeginUpdate();
+            _receiveAddressCombo.Items.Clear();
+            foreach (string address in addresses) _receiveAddressCombo.Items.Add(address);
+            int selected = previous is null ? -1 : addresses.FindIndex(address => address == previous);
+            _receiveAddressCombo.SelectedIndex = selected >= 0 ? selected : (addresses.Count > 0 ? 0 : -1);
+            _receiveAddressCombo.EndUpdate();
+
+            if (_receiveAddressCombo.SelectedItem is string selectedAddress)
+            {
+                _lastAddress = selectedAddress;
+                _receiveMessage.Text = "Выберите адрес для перевода или создайте новый. QR-код содержит только адрес.";
+            }
+            else
+            {
+                _lastAddress = null;
+                _receiveMessage.Text = "В кошельке нет адресов. Создайте новый адрес для получения монет.";
+            }
+            UpdateReceiveAddressDisplay();
+        }
+        catch (Exception ex)
+        {
+            _receiveMessage.Text = "Не удалось загрузить адреса кошелька: " + ex.Message;
+            UpdateReceiveAddressDisplay();
+        }
+        finally
+        {
+            _loadingReceiveAddresses = false;
+            if (_currentPage == "receive" && !IsDisposed)
+                _receiveAddressCombo.Enabled = IsNodeRunning() && File.Exists(AppPaths.WalletPath);
+        }
+    }
+
+    private void UpdateReceiveAddressDisplay()
+    {
+        string? address = _receiveAddressCombo.SelectedItem as string ?? _lastAddress;
+        _receiveAddress.Text = string.IsNullOrWhiteSpace(address) ? "В кошельке пока нет адреса" : address;
+        _receiveCopyButton.Enabled = !string.IsNullOrWhiteSpace(address);
+
+        Image? oldImage = _receiveQrCode.Image;
+        _receiveQrCode.Image = null;
+        oldImage?.Dispose();
+        if (string.IsNullOrWhiteSpace(address)) return;
+
+        try
+        {
+            using QRCodeData data = QRCodeGenerator.GenerateQrCode(address, QRCodeGenerator.ECCLevel.Q);
+            using var renderer = new PngByteQRCode(data);
+            byte[] png = renderer.GetGraphic(8);
+            using var stream = new MemoryStream(png);
+            using Image image = Image.FromStream(stream);
+            _receiveQrCode.Image = new Bitmap(image);
+        }
+        catch (Exception ex)
+        {
+            WriteNodeLog("Не удалось подготовить QR-код адреса: " + ex.Message);
+        }
     }
 
     private async Task RefreshTransactionsAsync()
@@ -2328,7 +2766,7 @@ internal sealed class MainForm : Form
                 DataGridViewRow row = grid.Rows[rowIndex];
                 row.Tag = txid;
                 row.Cells[5].ToolTipText = address;
-                row.Cells[2].Style.ForeColor = amount < 0 ? Color.FromArgb(161, 70, 53) : Color.FromArgb(53, 119, 74);
+                row.Cells[2].Style.ForeColor = amount < 0 ? Error : Success;
             }
             if (grid.Rows.Count > 0)
             {
@@ -2468,6 +2906,7 @@ internal sealed class MainForm : Form
             bool rescanComplete = result.TryGetProperty("rescan_complete", out JsonElement complete) && complete.ValueKind == JsonValueKind.True;
             string scanStatus = ReadString(result, "rescan_status");
             _lastAddress = address;
+            ResetWalletHistoryBackfill();
             _privateKeyInput.Clear();
             string importStatus = rescanComplete
                 ? "Ключ добавлен. История адреса восстановлена."
@@ -2542,26 +2981,26 @@ internal sealed class MainForm : Form
         if (address.Length < 20)
         {
             _sendMessage.Text = "Проверьте адрес получателя.";
-            _sendMessage.ForeColor = Color.FromArgb(161, 70, 53);
+            _sendMessage.ForeColor = Error;
             return;
         }
         if (!decimal.TryParse(rawAmount, NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out decimal amount) || amount <= 0)
         {
             _sendMessage.Text = "Введите сумму больше нуля, используя точку или запятую.";
-            _sendMessage.ForeColor = Color.FromArgb(161, 70, 53);
+            _sendMessage.ForeColor = Error;
             return;
         }
         if (decimal.Round(amount, 8) != amount)
         {
             _sendMessage.Text = "Сумма может содержать не больше 8 знаков после запятой.";
-            _sendMessage.ForeColor = Color.FromArgb(161, 70, 53);
+            _sendMessage.ForeColor = Error;
             return;
         }
         string password = _sendPassword.Text;
         if (password.Length == 0)
         {
             _sendMessage.Text = "Введите пароль кошелька.";
-            _sendMessage.ForeColor = Color.FromArgb(161, 70, 53);
+            _sendMessage.ForeColor = Error;
             return;
         }
 
@@ -2586,14 +3025,14 @@ internal sealed class MainForm : Form
             JsonElement result = await _rpc.CallAsync("sendtoaddress", parameters);
             string txid = result.ValueKind == JsonValueKind.String ? result.GetString() ?? "" : result.ToString();
             _sendMessage.Text = "Перевод принят нодой. Номер: " + txid;
-            _sendMessage.ForeColor = Color.FromArgb(53, 119, 74);
+            _sendMessage.ForeColor = Success;
             _sendPassword.Clear();
             await RefreshStateAsync();
         }
         catch (Exception ex)
         {
             _sendMessage.Text = ex.Message;
-            _sendMessage.ForeColor = Color.FromArgb(161, 70, 53);
+            _sendMessage.ForeColor = Error;
         }
         finally
         {
@@ -2642,6 +3081,13 @@ internal sealed class MainForm : Form
                         _balance = value;
                 }
                 catch { }
+                try
+                {
+                    JsonElement walletInfo = await _rpc.CallAsync("getwalletinfo");
+                    _matureCoins = ReadDecimal(walletInfo, "balance");
+                    _immatureCoins = ReadDecimal(walletInfo, "immature_balance");
+                }
+                catch { }
             }
 
             if (_minerRpc is not null)
@@ -2657,6 +3103,7 @@ internal sealed class MainForm : Form
                 catch { }
             }
 
+            await RefreshLifetimeWalletMinedBlocksAsync();
             await RefreshWalletMinedBlocksAsync();
             _nodeStatus = _headers > 0 && _height >= _headers ? "Синхронизация завершена" : "Синхронизация";
         }
@@ -2681,6 +3128,7 @@ internal sealed class MainForm : Form
                 _nodeState.Text = _nodeStatus;
                 _syncState.Text = SyncDescription();
                 _peerState.Text = $"Блоков: {_height:N0}     Узлов сети: {_connections}";
+                UpdateOverviewMiningSummary();
             }
             RefreshMiningControls();
             if (_currentPage == "node") UpdateNodePage();
@@ -2703,7 +3151,7 @@ internal sealed class MainForm : Form
         _miningState.Text = _cpuMiningActive
             ? $"CPU-майнинг включён · потоков: {_selectedThreads}"
             : "CPU-майнинг остановлен";
-        _miningState.ForeColor = _cpuMiningActive ? Color.FromArgb(53, 119, 74) : Muted;
+        _miningState.ForeColor = _cpuMiningActive ? Success : Muted;
         _cpuHashrate.Text = _cpuMiningActive
             ? $"Скорость CPU: {FormatHashrate(_cpuHashrateValue)}"
             : "Скорость CPU: —";
@@ -2712,7 +3160,7 @@ internal sealed class MainForm : Form
         _mineButton.Enabled = IsNodeRunning() && File.Exists(AppPaths.WalletPath);
 
         _gpuMiningState.Text = _gpuStatusText;
-        _gpuMiningState.ForeColor = _gpuMiningActive ? Color.FromArgb(53, 119, 74) : Muted;
+        _gpuMiningState.ForeColor = _gpuMiningActive ? Success : Muted;
         _miningHashrate.Text = _gpuHashrateText;
         _gpuRewardAddress.Text = string.IsNullOrWhiteSpace(_lastAddress)
             ? "Адрес награды будет взят из текущего кошелька."
@@ -2722,6 +3170,24 @@ internal sealed class MainForm : Form
             (_gpuMiningActive || _gpuDeviceCombo.SelectedItem is GpuDevice));
         _gpuDeviceCombo.Enabled = !_gpuMiningActive;
         _refreshGpuButton.Enabled = !_gpuMiningActive && !_checkingGpuDevices;
+    }
+
+    private void UpdateOverviewMiningSummary()
+    {
+        if (_lifetimeMinedBlocksLabel.IsDisposed || _matureCoinsLabel.IsDisposed || _immatureCoinsLabel.IsDisposed) return;
+        int lifetimeCount;
+        lock (_minedBlocksLock) lifetimeCount = _lifetimeMinedBlockIds.Count;
+        _lifetimeMinedBlocksLabel.Text = $"Добыто блоков за всё время: {lifetimeCount:N0}";
+        if (IsNodeRunning() && File.Exists(AppPaths.WalletPath))
+        {
+            _matureCoinsLabel.Text = "Зрелые монеты: " + FormatGcAmount(_matureCoins);
+            _immatureCoinsLabel.Text = "Незрелые монеты: " + FormatGcAmount(_immatureCoins);
+        }
+        else
+        {
+            _matureCoinsLabel.Text = "Зрелые монеты: —";
+            _immatureCoinsLabel.Text = "Незрелые монеты: —";
+        }
     }
 
     private string SyncDescription()
@@ -2737,12 +3203,14 @@ internal sealed class MainForm : Form
     {
         bool processRunning = IsNodeProcessRunning();
         _statusLabel.Text = processRunning ? _nodeStatus : "Нода остановлена";
+        _statusLabel.Text = TranslateUiText(_statusLabel.Text);
         _statusLabel.ForeColor = processRunning
             ? (_nodeStatus.Contains("завершена", StringComparison.OrdinalIgnoreCase)
-                ? Color.FromArgb(44, 117, 69) : Accent)
+                ? Success : Accent)
             : Muted;
         _statusLabel.BackColor = processRunning
-            ? Color.FromArgb(229, 235, 221) : Color.FromArgb(226, 228, 219);
+            ? (_darkTheme ? Color.FromArgb(48, 67, 53) : Color.FromArgb(229, 235, 221))
+            : (_darkTheme ? Color.FromArgb(48, 55, 50) : Color.FromArgb(226, 228, 219));
     }
 
     private bool IsNodeProcessRunning()
@@ -2913,7 +3381,7 @@ internal sealed class MainForm : Form
         {
             Location = UiPoint(x, y),
             Size = UiSize(width, height),
-            BackColor = Color.White,
+            BackColor = Surface,
             BorderStyle = BorderStyle.FixedSingle
         };
         _pagePanel.Controls.Add(card);
@@ -2963,8 +3431,8 @@ internal sealed class MainForm : Form
         button.Location = UiPoint(location.X, location.Y);
         button.Size = UiSize(size.Width, size.Height);
         button.FlatStyle = FlatStyle.Flat;
-        button.FlatAppearance.BorderColor = Color.FromArgb(194, 198, 187);
-        button.BackColor = Color.White;
+        button.FlatAppearance.BorderColor = _darkTheme ? Color.FromArgb(78, 88, 79) : Color.FromArgb(194, 198, 187);
+        button.BackColor = Surface;
         button.ForeColor = Ink;
         button.Font = new Font("Segoe UI Semibold", 9, FontStyle.Bold);
         button.Cursor = Cursors.Hand;
@@ -2976,8 +3444,195 @@ internal sealed class MainForm : Form
         box.Size = UiSize(size.Width, size.Height);
         box.Font = new Font("Segoe UI", 11);
         box.BorderStyle = BorderStyle.FixedSingle;
-        box.BackColor = Color.FromArgb(250, 250, 247);
+        box.BackColor = InputSurface;
         box.ForeColor = Ink;
+    }
+
+    private void LoadUiPreferences()
+    {
+        try
+        {
+            if (!File.Exists(AppPaths.UiSettingsPath)) return;
+            UiPreferences? settings = JsonSerializer.Deserialize<UiPreferences>(File.ReadAllText(AppPaths.UiSettingsPath));
+            _englishUi = string.Equals(settings?.Language, "en", StringComparison.OrdinalIgnoreCase);
+            _darkTheme = settings?.DarkTheme ?? false;
+        }
+        catch
+        {
+            _englishUi = false;
+            _darkTheme = false;
+        }
+    }
+
+    private void SaveUiPreferences()
+    {
+        try
+        {
+            Directory.CreateDirectory(AppPaths.DataRoot);
+            string json = JsonSerializer.Serialize(new UiPreferences
+            {
+                Language = _englishUi ? "en" : "ru",
+                DarkTheme = _darkTheme
+            });
+            File.WriteAllText(AppPaths.UiSettingsPath, json, new UTF8Encoding(false));
+        }
+        catch (Exception ex)
+        {
+            WriteNodeLog("Не удалось сохранить настройки интерфейса: " + ex.Message);
+        }
+    }
+
+    private void UpdatePreferenceControlText()
+    {
+        _themeButton.Text = _darkTheme ? "Светлая тема" : "Тёмная тема";
+        _languageCombo.SelectedIndex = _englishUi ? 1 : 0;
+    }
+
+    private string TranslateUiText(string value)
+    {
+        if (_englishUi)
+        {
+            if (RussianToEnglish.TryGetValue(value, out string? translated)) return translated;
+            return TranslateCommonPrefixes(value, english: true);
+        }
+        if (EnglishToRussian.TryGetValue(value, out string? russian)) return russian;
+        return TranslateCommonPrefixes(value, english: false);
+    }
+
+    private static string TranslateCommonPrefixes(string value, bool english)
+    {
+        (string Russian, string English)[] prefixes =
+        {
+            ("Блоков: ", "Blocks: "), ("Узлов сети: ", "Network peers: "), ("подключений: ", "connections: "),
+            ("Скорость CPU: ", "CPU hashrate: "), ("Скорость GPU: ", "GPU hashrate: "), ("Скорость: ", "Hashrate: "),
+            ("Сегодня: ", "Today: "), ("Текущая сессия: ", "Current session: "), ("Последняя сессия: ", "Last session: "),
+            ("Сессия: ", "Session: "), ("Добыто блоков за всё время: ", "Blocks mined all time: "),
+            ("Найдено адресов: ", "Addresses found: "), ("Найдено видеокарт: ", "GPUs found: "),
+            ("Синхронизировано ", "Synced "), ("Подключаюсь к ", "Connecting to "),
+            ("Ключ добавлен, но история восстановлена не полностью (", "Key imported, but address history is incomplete ("),
+            ("Зрелые монеты: ", "Mature coins: "), ("Незрелые монеты: ", "Immature coins: "),
+            ("Адрес награды: ", "Reward address: "), ("ID транзакции: ", "Transaction ID: "),
+            ("Перевод принят нодой. Номер: ", "Transfer accepted by the node. ID: "),
+            ("Не удалось загрузить адреса кошелька: ", "Could not load wallet addresses: "),
+            ("Не удалось загрузить адреса: ", "Could not load addresses: "),
+            ("Не удалось импортировать ключ: ", "Could not import key: "), ("Не удалось экспортировать ключ: ", "Could not export key: "),
+            ("Не удалось загрузить историю: ", "Could not load history: "),
+            ("Не удалось подключиться: ", "Could not connect: "), ("Не удалось запустить GPU-майнинг: ", "Could not start GPU mining: "),
+            ("Ошибка GPU-подмайнера: ", "GPU subminer error: "), ("Ошибка GPU: ", "GPU error: ")
+        };
+        foreach ((string source, string target) in prefixes)
+        {
+            string from = english ? source : target;
+            if (value.StartsWith(from, StringComparison.Ordinal))
+            {
+                string remainder = value[from.Length..];
+                if (english)
+                    remainder = remainder.Replace(" блоков", " blocks", StringComparison.Ordinal)
+                        .Replace(" блока", " blocks", StringComparison.Ordinal).Replace(" блок", " block", StringComparison.Ordinal)
+                        .Replace(". Экспорт ключа создаёт незашифрованный текстовый файл.", ". Exporting a key creates an unencrypted text file.", StringComparison.Ordinal);
+                else
+                    remainder = remainder.Replace(" blocks", " блоков", StringComparison.Ordinal)
+                        .Replace(" block", " блок", StringComparison.Ordinal)
+                        .Replace(". Exporting a key creates an unencrypted text file.", ". Экспорт ключа создаёт незашифрованный текстовый файл.", StringComparison.Ordinal);
+                return (english ? target : source) + remainder;
+            }
+        }
+        if (english)
+        {
+            value = value.Replace("     Узлов сети: ", "     Network peers: ", StringComparison.Ordinal)
+                .Replace(" · подключений: ", " · connections: ", StringComparison.Ordinal);
+        }
+        else
+        {
+            value = value.Replace("     Network peers: ", "     Узлов сети: ", StringComparison.Ordinal)
+                .Replace(" · connections: ", " · подключений: ", StringComparison.Ordinal);
+        }
+        return value;
+    }
+
+    private void ApplyUiLanguage(Control root)
+    {
+        if (root is TextBox textBox)
+            textBox.PlaceholderText = TranslateUiText(textBox.PlaceholderText);
+        else if (root is not ComboBox)
+            root.Text = TranslateUiText(root.Text);
+
+        if (root is DataGridView grid)
+        {
+            foreach (DataGridViewColumn column in grid.Columns)
+                column.HeaderText = TranslateUiText(column.HeaderText);
+            foreach (DataGridViewRow row in grid.Rows)
+                foreach (DataGridViewCell cell in row.Cells)
+                    if (cell.Value is string value) cell.Value = TranslateUiText(value);
+        }
+
+        foreach (Control child in root.Controls)
+            ApplyUiLanguage(child);
+    }
+
+    private void ApplyThemeToTree(Control root)
+    {
+        if (root == this || root == _headerPanel || root == _pagePanel)
+            root.BackColor = Canvas;
+        else if (root.Name is "navigationRail" or "railFooter")
+            root.BackColor = Rail;
+        else if (root == _receiveQrCode)
+            root.BackColor = Color.White;
+        else if (root is TextBox textBox)
+        {
+            if (textBox != _nodeLogBox)
+            {
+                textBox.BackColor = InputSurface;
+                textBox.ForeColor = Ink;
+            }
+        }
+        else if (root is ComboBox combo)
+        {
+            combo.BackColor = InputSurface;
+            combo.ForeColor = Ink;
+        }
+        else if (root is Button button && button.Parent?.Name == "navigationRail")
+        {
+            bool selected = string.Equals(button.Tag as string, _currentPage, StringComparison.Ordinal);
+            button.BackColor = selected
+                ? (_darkTheme ? Color.FromArgb(48, 61, 52) : Color.FromArgb(44, 59, 48))
+                : Rail;
+            button.ForeColor = selected ? Color.FromArgb(241, 218, 173) : Color.FromArgb(206, 215, 205);
+        }
+        else if (root is Panel panel)
+        {
+            Color background = panel.BackColor;
+            if (background == LightCanvas || background == DarkCanvas) panel.BackColor = Canvas;
+            else if (background == Color.White || background == DarkSurface) panel.BackColor = Surface;
+            else if (background == Color.FromArgb(220, 220, 214) || background == Color.FromArgb(61, 68, 62)) panel.BackColor = Divider;
+        }
+
+        if (root is Label label)
+        {
+            if (label.ForeColor == LightInk || label.ForeColor == DarkInk) label.ForeColor = Ink;
+            else if (label.ForeColor == LightMuted || label.ForeColor == DarkMuted) label.ForeColor = Muted;
+        }
+        if (root is Button nonRailButton && nonRailButton.Parent?.Name != "navigationRail")
+        {
+            Color background = nonRailButton.BackColor;
+            if (background == Color.White || background == DarkSurface) nonRailButton.BackColor = Surface;
+            else if (background == Color.FromArgb(166, 129, 63) || background == DarkAccent) nonRailButton.BackColor = Accent;
+            if (nonRailButton.ForeColor == LightInk || nonRailButton.ForeColor == DarkInk) nonRailButton.ForeColor = Ink;
+            nonRailButton.FlatAppearance.BorderColor = _darkTheme ? Color.FromArgb(78, 88, 79) : Color.FromArgb(194, 198, 187);
+        }
+        if (root is DataGridView dataGrid)
+        {
+            dataGrid.BackgroundColor = Surface;
+            dataGrid.DefaultCellStyle.BackColor = Surface;
+            dataGrid.DefaultCellStyle.ForeColor = Ink;
+            dataGrid.DefaultCellStyle.SelectionBackColor = _darkTheme ? Color.FromArgb(65, 78, 67) : Color.FromArgb(226, 233, 222);
+            dataGrid.DefaultCellStyle.SelectionForeColor = Ink;
+            dataGrid.ColumnHeadersDefaultCellStyle.BackColor = Canvas;
+            dataGrid.ColumnHeadersDefaultCellStyle.ForeColor = Ink;
+            dataGrid.GridColor = Divider;
+        }
+        foreach (Control child in root.Controls)
+            ApplyThemeToTree(child);
     }
 
     private static void OpenLink(string address)
