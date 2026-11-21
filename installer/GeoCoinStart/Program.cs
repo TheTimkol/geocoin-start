@@ -32,12 +32,13 @@ internal static class Program
 
 internal static class AppPaths
 {
-    public const string AppVersion = "0.3.1";
+    public const string AppVersion = "0.3.2";
     public const string OfficialVersion = "v0.1.3";
     public const string OfficialSha256 = "D97D655E3B45CD1B80BA4553BD5415F2B4FDD0FE370E50BA30158188D0C0EF99";
     public const string OfficialArchiveUrl = "https://github.com/NoemaCrypt/GeoCoin/releases/download/v0.1.3/GeoCoin-windows-x64-static.zip";
     public const string OriginalRepositoryUrl = "https://github.com/NoemaCrypt/GeoCoin";
     public const string DistributorUrl = "https://t.me/TheTimkol";
+    public const string LatestReleaseApiUrl = "https://api.github.com/repos/TheTimkol/geocoin-start/releases/latest";
     public const string OfficialWebsiteUrl = "https://geocoin.network/";
     public const string UninstallKey = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\GeoCoin-Start";
 

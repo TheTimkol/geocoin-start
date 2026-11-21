@@ -5,6 +5,7 @@ Multilingual installer and simplified GeoCoin wallet for Windows 10/11 x64. Russ
 ## What it includes
 
 - A single self-contained `GeoCoin-Start-Setup.exe`; no separate .NET runtime or administrator rights are required.
+- Manual update checks use the latest GitHub release, verify the setup executable's SHA-256 checksum, and start the installer after the app closes.
 - The official GeoCoin v0.1.3 Windows package is downloaded from the author's release and verified with SHA-256 before installation.
 - If the Windows profile path contains Cyrillic, the node and miner use a short ASCII-only path alias. Wallet data stays under the current user's `%LOCALAPPDATA%` folder.
 - Eight sections: Overview, Mining, Remote GPU Subminer, Node and Log, Send, Receive, Transactions, and Wallet.

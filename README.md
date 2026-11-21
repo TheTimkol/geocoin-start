@@ -12,6 +12,7 @@ Run the setup file and choose **Install**. An internet connection is required: t
 
 - Overview of the local node, synchronization, and wallet balance.
 - Russian, English, Simplified Chinese, Brazilian Portuguese, and Italian interface in both the installer and wallet, plus light and dark themes. The selections are saved on this computer.
+- A manual update check that downloads the latest GitHub release, verifies the installer SHA-256 checksum, and starts the per-user installer after the app shuts down.
 - A short ASCII-only path alias for the node and miner when a Windows profile path contains Cyrillic; wallet data stays in the current user's private `%LOCALAPPDATA%` folder.
 - A node page with live RPC health, process status, connected peers, and a rolling log that can also be opened as a file.
 - A miner-only RPC profile for a trusted LAN/VPN and a remote GPU subminer page. The remote worker uses a public reward address and miner-role credentials, never a wallet private key or admin RPC password.

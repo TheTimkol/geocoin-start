@@ -14,9 +14,53 @@ namespace GeoCoinStart;
 
 internal sealed class MainForm : Form
 {
+    private sealed class PageWheelComboBox : ComboBox
+    {
+        [System.ComponentModel.Browsable(false)]
+        [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
+        public Action<int>? ForwardWheelToPage { get; set; }
+
+        protected override void OnMouseWheel(MouseEventArgs e)
+        {
+            if (DroppedDown)
+            {
+                base.OnMouseWheel(e);
+                return;
+            }
+
+            ForwardWheelToPage?.Invoke(e.Delta);
+        }
+    }
+
+    private sealed class PageWheelCheckedListBox : CheckedListBox
+    {
+        [System.ComponentModel.Browsable(false)]
+        [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
+        public Action<int>? ForwardWheelToPage { get; set; }
+
+        protected override void OnMouseWheel(MouseEventArgs e)
+        {
+            int visibleRows = Math.Max(1, ClientSize.Height / Math.Max(1, ItemHeight));
+            bool canScrollList = Items.Count > visibleRows &&
+                (e.Delta > 0 ? TopIndex > 0 : TopIndex + visibleRows < Items.Count);
+            if (canScrollList)
+            {
+                base.OnMouseWheel(e);
+                return;
+            }
+
+            ForwardWheelToPage?.Invoke(e.Delta);
+        }
+    }
+
     private sealed record GpuDevice(string Backend, string Id, string Name)
     {
         public override string ToString() => $"{Name} — {Backend.ToUpperInvariant()} · {Id}";
+    }
+
+    private sealed record GpuBackend(string Value)
+    {
+        public override string ToString() => Value.ToUpperInvariant();
     }
 
     private sealed record FeeEstimate(decimal ApproximateGc, decimal MinimumGc, decimal RateGcPerKb, int AssumedBytes);
@@ -178,6 +222,7 @@ internal sealed class MainForm : Form
     private readonly Label _statusLabel = new();
     private readonly ComboBox _languageCombo = new();
     private readonly Button _themeButton = new();
+    private readonly Button _checkUpdatesButton = new();
     private readonly Label _balanceValue = new();
     private readonly Label _walletAddress = new();
     private readonly Label _nodeState = new();
@@ -203,8 +248,13 @@ internal sealed class MainForm : Form
     private readonly Label _immatureCoinsLabel = new();
     private readonly TextBox _nodeLogBox = new();
     private readonly NumericUpDown _threadCount = new();
-    private readonly ComboBox _gpuDeviceCombo = new();
-    private readonly ComboBox _remoteGpuDeviceCombo = new();
+    private readonly PageWheelComboBox _gpuBackendCombo = new();
+    private readonly PageWheelComboBox _remoteGpuBackendCombo = new();
+    private readonly PageWheelCheckedListBox _gpuDeviceList = new();
+    private readonly PageWheelCheckedListBox _remoteGpuDeviceList = new();
+    private readonly HashSet<string> _selectedGpuDeviceKeys = new(StringComparer.OrdinalIgnoreCase);
+    private string? _selectedGpuBackend;
+    private bool _updatingGpuDeviceLists;
     private readonly ComboBox _rpcBindCombo = new();
     private readonly ComboBox _walletAddressCombo = new();
     private readonly ComboBox _receiveAddressCombo = new();
@@ -294,6 +344,8 @@ internal sealed class MainForm : Form
     private bool _checkingGpuDevices;
     private bool _gpuDevicesScanned;
     private bool _loadingTransactions;
+    private bool _transactionsAutoLoadPending;
+    private string? _updateInstallerToLaunch;
     private bool _loadingWalletAddresses;
     private bool _loadingReceiveAddresses;
     private bool _walletHistoryBackfilled;
@@ -332,6 +384,23 @@ internal sealed class MainForm : Form
         {
             _nodePathAlias?.Dispose();
             _nodePathAlias = null;
+            if (_updateInstallerToLaunch is not { } installerPath) return;
+            _updateInstallerToLaunch = null;
+            try
+            {
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = installerPath,
+                    WorkingDirectory = Path.GetDirectoryName(installerPath)!,
+                    UseShellExecute = true
+                });
+            }
+            catch (Exception ex)
+            {
+                try { File.Delete(installerPath); } catch { }
+                MessageBox.Show(TranslateUiText("Не удалось запустить установщик обновления: " + ex.Message),
+                    TranslateUiText("Ошибка обновления"), MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
         };
 
         LoadMinedBlockRecords();
@@ -371,12 +440,14 @@ internal sealed class MainForm : Form
         _refreshGpuButton.Click += async (_, _) => await RefreshGpuDevicesAsync();
         _remoteGpuFindButton.Click += async (_, _) => await RefreshGpuDevicesAsync();
         _remoteGpuButton.Click += async (_, _) => await ToggleRemoteGpuMiningAsync();
-        _gpuDeviceCombo.SelectedIndexChanged += (_, _) =>
-        {
-            if (_gpuMineButton.IsHandleCreated)
-                _gpuMineButton.Enabled = IsNodeRunning() && File.Exists(AppPaths.WalletPath) &&
-                    (_gpuMiningActive || _gpuDeviceCombo.SelectedItem is GpuDevice);
-        };
+        _gpuBackendCombo.ForwardWheelToPage = ScrollPageWithMouseWheel;
+        _remoteGpuBackendCombo.ForwardWheelToPage = ScrollPageWithMouseWheel;
+        _gpuDeviceList.ForwardWheelToPage = ScrollPageWithMouseWheel;
+        _remoteGpuDeviceList.ForwardWheelToPage = ScrollPageWithMouseWheel;
+        _gpuBackendCombo.SelectedIndexChanged += (_, _) => GpuBackendChanged(_gpuBackendCombo, _gpuDeviceList);
+        _remoteGpuBackendCombo.SelectedIndexChanged += (_, _) => GpuBackendChanged(_remoteGpuBackendCombo, _remoteGpuDeviceList);
+        _gpuDeviceList.ItemCheck += (_, e) => GpuDeviceItemCheck(_gpuDeviceList, e);
+        _remoteGpuDeviceList.ItemCheck += (_, e) => GpuDeviceItemCheck(_remoteGpuDeviceList, e);
         _walletAddressCombo.SelectedIndexChanged += (_, _) =>
         {
             if (_walletKeyExportButton.IsHandleCreated)
@@ -577,6 +648,11 @@ internal sealed class MainForm : Form
             UpdateStatus();
         };
 
+        StyleSecondaryButton(_checkUpdatesButton, new Point(0, 8), new Size(148, 28));
+        _checkUpdatesButton.Text = "Проверить обновления";
+        _checkUpdatesButton.Click += async (_, _) => await CheckForUpdatesAsync();
+        _headerPanel.Controls.Add(_checkUpdatesButton);
+
         StyleSecondaryButton(_themeButton, new Point(0, 8), new Size(112, 28));
         _themeButton.Click += (_, _) =>
         {
@@ -615,10 +691,12 @@ internal sealed class MainForm : Form
         int margin = ScaleUi(34);
         int width = _statusLabel.Width > 0 ? _statusLabel.Width : ScaleUi(292);
         int themeWidth = ScaleUi(112);
+        int updateWidth = ScaleUi(148);
         int controlGap = ScaleUi(8);
         int right = _headerPanel.ClientSize.Width - margin;
         _themeButton.Location = new Point(Math.Max(margin, right - themeWidth), ScaleUi(8));
-        _languageCombo.Location = new Point(Math.Max(margin, right - themeWidth - controlGap - ScaleUi(112)), ScaleUi(8));
+        _checkUpdatesButton.Location = new Point(Math.Max(margin, right - themeWidth - controlGap - updateWidth), ScaleUi(8));
+        _languageCombo.Location = new Point(Math.Max(margin, right - themeWidth - controlGap - updateWidth - controlGap - ScaleUi(112)), ScaleUi(8));
         _statusLabel.Location = new Point(Math.Max(margin, right - width), ScaleUi(43));
     }
 
@@ -643,6 +721,16 @@ internal sealed class MainForm : Form
     private Size UiSize(int width, int height) => new(ScaleUi(width), ScaleUi(height));
     private Padding UiPadding(int left, int top, int right, int bottom)
         => new(ScaleUi(left), ScaleUi(top), ScaleUi(right), ScaleUi(bottom));
+
+    private void ScrollPageWithMouseWheel(int delta)
+    {
+        if (delta == 0 || !_pagePanel.IsHandleCreated || _pagePanel.IsDisposed || !_pagePanel.VerticalScroll.Visible) return;
+        int currentY = Math.Max(0, -_pagePanel.AutoScrollPosition.Y);
+        int maxY = Math.Max(0, _pagePanel.DisplayRectangle.Height - _pagePanel.ClientSize.Height);
+        int notches = Math.Max(1, Math.Abs(delta) / 120);
+        int targetY = Math.Clamp(currentY - Math.Sign(delta) * ScaleUi(48) * notches, 0, maxY);
+        _pagePanel.AutoScrollPosition = new Point(Math.Max(0, -_pagePanel.AutoScrollPosition.X), targetY);
+    }
 
     private void FitWindowToScreen()
     {
@@ -696,6 +784,8 @@ internal sealed class MainForm : Form
 
     private void BuildPage()
     {
+        int savedScrollX = Math.Max(0, -_pagePanel.AutoScrollPosition.X);
+        int savedScrollY = Math.Max(0, -_pagePanel.AutoScrollPosition.Y);
         _pagePanel.SuspendLayout();
         _pagePanel.Controls.Clear();
         _transactionGrid = null;
@@ -711,6 +801,8 @@ internal sealed class MainForm : Form
             default: BuildOverviewPage(); break;
         }
         _pagePanel.ResumeLayout();
+        _pagePanel.PerformLayout();
+        _pagePanel.AutoScrollPosition = new Point(savedScrollX, savedScrollY);
         ApplyThemeToTree(this);
         ApplyUiLanguage(this);
         UpdateStatus();
@@ -808,7 +900,7 @@ internal sealed class MainForm : Form
         _minedBlocksSessionLabel.Font = new Font("Segoe UI Semibold", 10, FontStyle.Bold);
         _minedBlocksSessionLabel.ForeColor = Ink;
         blockStats.Controls.Add(_minedBlocksSessionLabel);
-        Panel card = AddCard(22, 154, cardWidth, 500);
+        Panel card = AddCard(22, 154, cardWidth, 680);
 
         AddLabel(card, "Майнинг на процессоре · CPU", 24, 18, cardWidth - 48, 24, Ink, 13, bold: true);
         AddLabel(card, "Потоки", 24, 52, 100, 22, Muted, 10, bold: true);
@@ -850,52 +942,47 @@ internal sealed class MainForm : Form
         card.Controls.Add(divider);
 
         AddLabel(card, "Майнинг на видеокарте · GPU", 24, 250, cardWidth - 48, 24, Ink, 13, bold: true);
-        AddLabel(card, "Выберите видеокарту. Награда поступит на уже существующий адрес этого кошелька.", 24, 280, cardWidth - 48, 28, Muted, 9.5f);
-        _gpuDeviceCombo.DropDownStyle = ComboBoxStyle.DropDownList;
-        GpuDevice? previousDevice = _gpuDeviceCombo.SelectedItem as GpuDevice;
-        _gpuDeviceCombo.Items.Clear();
-        foreach (GpuDevice device in _gpuDevices) _gpuDeviceCombo.Items.Add(device);
-        int selectedDevice = previousDevice is null ? -1 : _gpuDevices.FindIndex(device =>
-            device.Backend == previousDevice.Backend && device.Id == previousDevice.Id);
-        _gpuDeviceCombo.SelectedIndex = selectedDevice >= 0 ? selectedDevice : (_gpuDeviceCombo.Items.Count > 0 ? 0 : -1);
-        _gpuDeviceCombo.Location = UiPoint(24, 314);
-        _gpuDeviceCombo.Size = UiSize(Math.Max(240, cardWidth - 150), 34);
-        _gpuDeviceCombo.Font = new Font("Segoe UI", 10);
-        _gpuDeviceCombo.Enabled = !_gpuMiningActive;
-        card.Controls.Add(_gpuDeviceCombo);
+        AddLabel(card, "Награда поступит на уже существующий адрес этого кошелька.", 24, 280, cardWidth - 48, 24, Muted, 9.5f);
+        AddLabel(card, "Протокол GPU", 24, 310, 150, 20, Ink, 10, bold: true);
+        ConfigureGpuBackendCombo(_gpuBackendCombo, new Point(24, 334), new Size(Math.Max(240, cardWidth - 150), 34), !_gpuMiningActive);
+        card.Controls.Add(_gpuBackendCombo);
 
         _refreshGpuButton.Text = "Найти";
-        StyleSecondaryButton(_refreshGpuButton, new Point(cardWidth - 112, 312), new Size(88, 36));
+        StyleSecondaryButton(_refreshGpuButton, new Point(cardWidth - 112, 332), new Size(88, 36));
         _refreshGpuButton.Enabled = !_gpuMiningActive && !_checkingGpuDevices;
         card.Controls.Add(_refreshGpuButton);
 
+        AddLabel(card, "Видеокарты — можно выбрать несколько", 24, 374, cardWidth - 48, 20, Ink, 10, bold: true);
+        ConfigureGpuDeviceList(_gpuDeviceList, new Point(24, 398), new Size(cardWidth - 48, 126), !_gpuMiningActive);
+        card.Controls.Add(_gpuDeviceList);
+
         _gpuMiningState.Text = _gpuStatusText;
-        _gpuMiningState.Location = UiPoint(24, 358);
+        _gpuMiningState.Location = UiPoint(24, 534);
         _gpuMiningState.AutoSize = true;
         _gpuMiningState.ForeColor = _gpuMiningActive ? Success : Muted;
         card.Controls.Add(_gpuMiningState);
         _miningHashrate.Text = _gpuHashrateText;
-        _miningHashrate.Location = UiPoint(24, 383);
+        _miningHashrate.Location = UiPoint(24, 558);
         _miningHashrate.Size = UiSize(cardWidth - 48, 24);
         _miningHashrate.ForeColor = Muted;
         card.Controls.Add(_miningHashrate);
         _gpuRewardAddress.Text = string.IsNullOrWhiteSpace(_lastAddress)
             ? "Адрес награды будет взят из текущего кошелька."
             : "Адрес награды: " + _lastAddress;
-        _gpuRewardAddress.Location = UiPoint(24, 407);
+        _gpuRewardAddress.Location = UiPoint(24, 582);
         _gpuRewardAddress.Size = UiSize(cardWidth - 48, 24);
         _gpuRewardAddress.ForeColor = Muted;
         _gpuRewardAddress.AutoEllipsis = true;
         card.Controls.Add(_gpuRewardAddress);
 
         _gpuMineButton.Text = _remoteGpuMining ? "Перейти к подмайнеру" : _gpuMiningActive ? "Остановить GPU" : "Запустить GPU";
-        StylePrimaryButton(_gpuMineButton, new Point(24, 444), new Size(_remoteGpuMining ? 240 : 204, 42));
+        StylePrimaryButton(_gpuMineButton, new Point(24, 616), new Size(_remoteGpuMining ? 240 : 204, 42));
         _gpuMineButton.Enabled = _remoteGpuMining || (IsNodeRunning() && File.Exists(AppPaths.WalletPath) &&
-            (_gpuMiningActive || _gpuDeviceCombo.SelectedItem is GpuDevice));
+            (_gpuMiningActive || SelectedGpuDevices().Count > 0));
         card.Controls.Add(_gpuMineButton);
 
-        if (!IsNodeRunning()) AddParagraph("Сначала запустите ноду на странице «Обзор».", 24, 674, cardWidth - 48, 32);
-        else if (!File.Exists(AppPaths.WalletPath)) AddParagraph("Сначала создайте или импортируйте кошелёк на странице «Обзор».", 24, 674, cardWidth - 48, 32);
+        if (!IsNodeRunning()) AddParagraph("Сначала запустите ноду на странице «Обзор».", 24, 850, cardWidth - 48, 32);
+        else if (!File.Exists(AppPaths.WalletPath)) AddParagraph("Сначала создайте или импортируйте кошелёк на странице «Обзор».", 24, 850, cardWidth - 48, 32);
         UpdateMinedBlockCounters();
     }
 
@@ -1008,7 +1095,7 @@ internal sealed class MainForm : Form
         _minedBlocksSessionLabel.Font = new Font("Segoe UI Semibold", 10, FontStyle.Bold);
         _minedBlocksSessionLabel.ForeColor = Ink;
         blockStats.Controls.Add(_minedBlocksSessionLabel);
-        Panel card = AddCard(22, 156, cardWidth, 476);
+        Panel card = AddCard(22, 156, cardWidth, 654);
         AddLabel(card, "ПОДКЛЮЧЕНИЕ К НОДЕ", 22, 16, cardWidth - 44, 20, Muted, 9, bold: true);
         AddLabel(card, "Адрес RPC-ноды", 22, 48, 230, 20, Ink, 10, bold: true);
         StyleTextBox(_remoteNodeUrlInput, new Point(22, 72), new Size(Math.Min(470, cardWidth - 44), 34));
@@ -1030,38 +1117,33 @@ internal sealed class MainForm : Form
         StyleTextBox(_remoteRewardAddressInput, new Point(22, 290), new Size(Math.Min(520, cardWidth - 44), 34));
         _remoteRewardAddressInput.Enabled = !_remoteGpuMining && !_startingRemoteGpu;
         card.Controls.Add(_remoteRewardAddressInput);
-        AddLabel(card, "Видеокарта", 22, 338, 200, 20, Ink, 10, bold: true);
-        _remoteGpuDeviceCombo.DropDownStyle = ComboBoxStyle.DropDownList;
-        GpuDevice? previous = _remoteGpuDeviceCombo.SelectedItem as GpuDevice;
-        _remoteGpuDeviceCombo.Items.Clear();
-        foreach (GpuDevice device in _gpuDevices) _remoteGpuDeviceCombo.Items.Add(device);
-        int selected = previous is null ? -1 : _gpuDevices.FindIndex(device => device.Backend == previous.Backend && device.Id == previous.Id);
-        _remoteGpuDeviceCombo.SelectedIndex = selected >= 0 ? selected : (_remoteGpuDeviceCombo.Items.Count > 0 ? 0 : -1);
-        _remoteGpuDeviceCombo.Location = UiPoint(22, 362);
-        _remoteGpuDeviceCombo.Size = UiSize(Math.Max(240, cardWidth - 160), 34);
-        _remoteGpuDeviceCombo.Enabled = !_remoteGpuMining && !_startingRemoteGpu;
-        card.Controls.Add(_remoteGpuDeviceCombo);
+        AddLabel(card, "Протокол GPU", 22, 338, 200, 20, Ink, 10, bold: true);
+        ConfigureGpuBackendCombo(_remoteGpuBackendCombo, new Point(22, 362), new Size(Math.Max(240, cardWidth - 160), 34), !_remoteGpuMining && !_startingRemoteGpu);
+        card.Controls.Add(_remoteGpuBackendCombo);
         _remoteGpuFindButton.Text = "Найти";
         StyleSecondaryButton(_remoteGpuFindButton, new Point(cardWidth - 122, 360), new Size(96, 36));
         _remoteGpuFindButton.Enabled = !_remoteGpuMining && !_startingRemoteGpu && !_checkingGpuDevices;
         card.Controls.Add(_remoteGpuFindButton);
+        AddLabel(card, "Видеокарты — можно выбрать несколько", 22, 402, cardWidth - 44, 20, Ink, 10, bold: true);
+        ConfigureGpuDeviceList(_remoteGpuDeviceList, new Point(22, 426), new Size(cardWidth - 44, 126), !_remoteGpuMining && !_startingRemoteGpu);
+        card.Controls.Add(_remoteGpuDeviceList);
         _gpuMiningState.Text = _gpuStatusText;
-        _gpuMiningState.Location = UiPoint(22, 402);
+        _gpuMiningState.Location = UiPoint(22, 560);
         _gpuMiningState.AutoSize = true;
         _gpuMiningState.ForeColor = _remoteGpuMining ? Success : Muted;
         card.Controls.Add(_gpuMiningState);
         _miningHashrate.Text = _gpuHashrateText;
-        _miningHashrate.Location = UiPoint(330, 402);
+        _miningHashrate.Location = UiPoint(330, 560);
         _miningHashrate.Size = UiSize(Math.Max(180, cardWidth - 360), 24);
         _miningHashrate.ForeColor = Muted;
         card.Controls.Add(_miningHashrate);
         _remoteGpuButton.Text = _remoteGpuMining ? "Остановить подмайнер" : _startingRemoteGpu ? "Подключаюсь…" : "Подключить и начать GPU-майнинг";
-        StylePrimaryButton(_remoteGpuButton, new Point(22, 432), new Size(300, 36));
+        StylePrimaryButton(_remoteGpuButton, new Point(22, 596), new Size(300, 36));
         _remoteGpuButton.Enabled = _remoteGpuMining || (!_startingRemoteGpu && !_checkingGpuDevices && !IsNodeRunning() &&
-            _gpuMinerProcess is null && _remoteGpuDeviceCombo.SelectedItem is GpuDevice);
+            _gpuMinerProcess is null && SelectedGpuDevices().Count > 0);
         card.Controls.Add(_remoteGpuButton);
         AddParagraph("На узле нужен miner RPC-пользователь и пароль; admin RPC и пароль кошелька сюда не вводите. Подключайтесь только по доверенной LAN/VPN: RPC не шифрует пароль при передаче.",
-            22, 650, cardWidth, 54);
+            22, 832, cardWidth, 54);
         UpdateMinedBlockCounters();
     }
 
@@ -1308,6 +1390,7 @@ internal sealed class MainForm : Form
 
     private void BuildTransactionsPage()
     {
+        _transactionsAutoLoadPending = false;
         if (!IsNodeRunning() || !File.Exists(AppPaths.WalletPath))
         {
             BuildUnavailableState(
@@ -1317,6 +1400,8 @@ internal sealed class MainForm : Form
                     : "Создайте или импортируйте кошелёк на странице «Обзор», чтобы загрузить историю переводов и наград.");
             return;
         }
+
+        _transactionsAutoLoadPending = true;
 
         int cardWidth = PageCardWidth(700);
         AddParagraph("История входящих переводов, отправок и наград за майнинг.", 22, 12, cardWidth - 130, 38);
@@ -1909,6 +1994,16 @@ internal sealed class MainForm : Form
                 catch (JsonException) { }
             }
             _gpuDevices.Sort((left, right) => string.Compare(left.ToString(), right.ToString(), StringComparison.CurrentCultureIgnoreCase));
+            _selectedGpuDeviceKeys.RemoveWhere(key => !_gpuDevices.Any(device => string.Equals(GpuDeviceKey(device), key, StringComparison.OrdinalIgnoreCase)));
+            string[] backends = AvailableGpuBackends();
+            if (_selectedGpuBackend is null || !backends.Contains(_selectedGpuBackend, StringComparer.OrdinalIgnoreCase))
+                _selectedGpuBackend = backends.FirstOrDefault();
+            if (_selectedGpuDeviceKeys.Count == 0 && _selectedGpuBackend is not null)
+            {
+                GpuDevice? firstDevice = _gpuDevices.FirstOrDefault(device =>
+                    string.Equals(device.Backend, _selectedGpuBackend, StringComparison.OrdinalIgnoreCase));
+                if (firstDevice is not null) _selectedGpuDeviceKeys.Add(GpuDeviceKey(firstDevice));
+            }
             _gpuDevicesScanned = true;
             _gpuStatusText = _gpuDevices.Count == 0
                 ? "Совместимая видеокарта не найдена. Проверьте драйверы."
@@ -1927,6 +2022,116 @@ internal sealed class MainForm : Form
             ReleaseNodePathAliasIfIdle();
             if (_currentPage == "mining" || _currentPage == "subminer") BuildPage();
         }
+    }
+
+    private static string GpuDeviceKey(GpuDevice device) => device.Backend + "\0" + device.Id;
+
+    private string[] AvailableGpuBackends()
+        => _gpuDevices.Select(device => device.Backend)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(backend => backend.ToLowerInvariant() switch { "cuda" => 0, "opencl" => 1, "amd" => 2, _ => 3 })
+            .ThenBy(backend => backend, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+    private List<GpuDevice> SelectedGpuDevices()
+        => _selectedGpuBackend is null
+            ? new List<GpuDevice>()
+            : _gpuDevices.Where(device =>
+                string.Equals(device.Backend, _selectedGpuBackend, StringComparison.OrdinalIgnoreCase) &&
+                _selectedGpuDeviceKeys.Contains(GpuDeviceKey(device))).ToList();
+
+    private void ConfigureGpuBackendCombo(ComboBox combo, Point location, Size size, bool enabled)
+    {
+        _updatingGpuDeviceLists = true;
+        try
+        {
+            string[] backends = AvailableGpuBackends();
+            if (_selectedGpuBackend is null || !backends.Contains(_selectedGpuBackend, StringComparer.OrdinalIgnoreCase))
+                _selectedGpuBackend = backends.FirstOrDefault();
+
+            combo.BeginUpdate();
+            combo.Items.Clear();
+            foreach (string backend in backends) combo.Items.Add(new GpuBackend(backend));
+            combo.SelectedItem = combo.Items.Cast<GpuBackend>().FirstOrDefault(item =>
+                string.Equals(item.Value, _selectedGpuBackend, StringComparison.OrdinalIgnoreCase));
+            combo.DropDownStyle = ComboBoxStyle.DropDownList;
+            combo.Location = UiPoint(location.X, location.Y);
+            combo.Size = UiSize(size.Width, size.Height);
+            combo.Font = new Font("Segoe UI", 10);
+            combo.BackColor = InputSurface;
+            combo.ForeColor = Ink;
+            combo.Enabled = enabled && backends.Length > 0;
+        }
+        finally
+        {
+            combo.EndUpdate();
+            _updatingGpuDeviceLists = false;
+        }
+    }
+
+    private void ConfigureGpuDeviceList(CheckedListBox list, Point location, Size size, bool enabled)
+    {
+        list.Location = UiPoint(location.X, location.Y);
+        list.Size = UiSize(size.Width, size.Height);
+        list.Font = new Font("Segoe UI", 9.5f);
+        list.BackColor = InputSurface;
+        list.ForeColor = Ink;
+        list.BorderStyle = BorderStyle.FixedSingle;
+        list.CheckOnClick = true;
+        list.IntegralHeight = false;
+        list.HorizontalScrollbar = true;
+        list.ItemHeight = ScaleUi(24);
+        PopulateGpuDeviceItems(list, enabled);
+    }
+
+    private void PopulateGpuDeviceItems(CheckedListBox list, bool enabled)
+    {
+        _updatingGpuDeviceLists = true;
+        try
+        {
+            list.BeginUpdate();
+            list.Items.Clear();
+            foreach (GpuDevice device in _gpuDevices.Where(device =>
+                         string.Equals(device.Backend, _selectedGpuBackend, StringComparison.OrdinalIgnoreCase)))
+            {
+                list.Items.Add(device, _selectedGpuDeviceKeys.Contains(GpuDeviceKey(device)));
+            }
+            list.Enabled = enabled && list.Items.Count > 0;
+        }
+        finally
+        {
+            list.EndUpdate();
+            _updatingGpuDeviceLists = false;
+        }
+    }
+
+    private void GpuBackendChanged(ComboBox combo, CheckedListBox list)
+    {
+        if (_updatingGpuDeviceLists || combo.SelectedItem is not GpuBackend backend) return;
+        _selectedGpuBackend = backend.Value;
+        PopulateGpuDeviceItems(list, list.Enabled);
+        UpdateGpuSelectionButtons();
+    }
+
+    private void GpuDeviceItemCheck(CheckedListBox list, ItemCheckEventArgs e)
+    {
+        if (_updatingGpuDeviceLists || e.Index < 0 || e.Index >= list.Items.Count || list.Items[e.Index] is not GpuDevice device) return;
+        string key = GpuDeviceKey(device);
+        if (e.NewValue == CheckState.Checked) _selectedGpuDeviceKeys.Add(key);
+        else _selectedGpuDeviceKeys.Remove(key);
+        if (IsHandleCreated)
+        {
+            BeginInvoke((Action)UpdateGpuSelectionButtons);
+        }
+    }
+
+    private void UpdateGpuSelectionButtons()
+    {
+        int selectedCount = SelectedGpuDevices().Count;
+        if (_gpuMineButton.IsHandleCreated && !_gpuMiningActive)
+            _gpuMineButton.Enabled = _remoteGpuMining || (selectedCount > 0 && IsNodeRunning() && File.Exists(AppPaths.WalletPath));
+        if (_remoteGpuButton.IsHandleCreated && !_remoteGpuMining && !_startingRemoteGpu)
+            _remoteGpuButton.Enabled = selectedCount > 0 && !_checkingGpuDevices && !IsNodeRunning() && _gpuMinerProcess is null;
     }
 
     private async Task ToggleCpuMiningAsync()
@@ -1997,14 +2202,15 @@ internal sealed class MainForm : Form
                 "GPU-майнинг недоступен", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
-        if (_gpuDeviceCombo.SelectedItem is not GpuDevice device)
+        List<GpuDevice> devices = SelectedGpuDevices();
+        if (devices.Count == 0 || _selectedGpuBackend is null)
         {
-            ShowLocalizedMessage("Сначала нажмите «Найти» и выберите видеокарту.",
+            ShowLocalizedMessage("Нажмите «Найти» и отметьте одну или несколько видеокарт.",
                 "Видеокарта не выбрана", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
 
-        string warning = $"Начать майнинг на видеокарте «{device.Name}»?\n\n" +
+        string warning = "Запустить GPU-майнинг на всех отмеченных видеокартах?\n\n" +
                          "Видеокарта будет работать с высокой нагрузкой и может нагреваться. Награда поступит на существующий адрес текущего кошелька.";
         if (ShowLocalizedMessage(warning, "Начать GPU-майнинг", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
             return;
@@ -2028,8 +2234,8 @@ internal sealed class MainForm : Form
             AddArgument(start, "--rpc-user", _minerRpcUsername);
             AddArgument(start, "--rpc-pass-file", NodeCompatiblePath(_minerPassFile));
             AddArgument(start, "--address", address);
-            AddArgument(start, "--backend", device.Backend);
-            AddArgument(start, "--devices", device.Id);
+            AddArgument(start, "--backend", _selectedGpuBackend);
+            AddArgument(start, "--devices", string.Join(",", devices.Select(device => device.Id)));
             start.ArgumentList.Add("--continuous");
             start.ArgumentList.Add("--control-stdin");
             start.ArgumentList.Add("--stats-json");
@@ -2130,13 +2336,14 @@ internal sealed class MainForm : Form
                 "Заполните данные подмайнера", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
-        if (_remoteGpuDeviceCombo.SelectedItem is not GpuDevice device)
+        List<GpuDevice> devices = SelectedGpuDevices();
+        if (devices.Count == 0 || _selectedGpuBackend is null)
         {
-            ShowLocalizedMessage("Нажмите «Найти» и выберите видеокарту.", "Видеокарта не выбрана",
+            ShowLocalizedMessage("Нажмите «Найти» и отметьте одну или несколько видеокарт.", "Видеокарта не выбрана",
                 MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
-        if (ShowLocalizedMessage("Подключить видеокарту к удалённой RPC-ноде?\n\n" +
+        if (ShowLocalizedMessage("Подключить выбранные видеокарты к удалённой RPC-ноде?\n\n" +
                 "Передача miner RPC-пароля по обычному HTTP не шифруется. Продолжайте только в своей доверенной локальной сети или VPN. Никогда не вводите здесь admin RPC пароль или пароль кошелька.",
                 "Запустить GPU-подмайнер", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
             return;
@@ -2177,8 +2384,8 @@ internal sealed class MainForm : Form
             AddArgument(start, "--rpc-user", username);
             AddArgument(start, "--rpc-pass-file", NodeCompatiblePath(passFile));
             AddArgument(start, "--address", address);
-            AddArgument(start, "--backend", device.Backend);
-            AddArgument(start, "--devices", device.Id);
+            AddArgument(start, "--backend", _selectedGpuBackend);
+            AddArgument(start, "--devices", string.Join(",", devices.Select(device => device.Id)));
             start.ArgumentList.Add("--continuous");
             start.ArgumentList.Add("--control-stdin");
             start.ArgumentList.Add("--stats-json");
@@ -2226,7 +2433,7 @@ internal sealed class MainForm : Form
             UpdateMiningSessionState();
             miner.BeginOutputReadLine();
             miner.BeginErrorReadLine();
-            WriteNodeLog($"[GPU-подмайнер] Подключение к {endpoint.Host}:{endpoint.Port}, устройство {device.Name}, адрес награды {address}.");
+            WriteNodeLog($"[GPU-подмайнер] Подключение к {endpoint.Host}:{endpoint.Port}, устройства {string.Join(", ", devices.Select(selectedDevice => selectedDevice.Name))}, адрес награды {address}.");
             _gpuStatusText = $"Подключаюсь к {endpoint.Host}:{endpoint.Port}…";
             _gpuHashrateText = "Скорость GPU: ожидание данных…";
             BuildPage();
@@ -2289,7 +2496,7 @@ internal sealed class MainForm : Form
         {
             BeginInvoke((Action)(() =>
             {
-                if (_currentPage is "mining" or "subminer") _gpuMiningState.Text = _gpuStatusText;
+                if (_currentPage is "mining" or "subminer") _gpuMiningState.Text = TranslateUiText(_gpuStatusText);
             }));
         }
         catch (InvalidOperationException) { }
@@ -2349,8 +2556,8 @@ internal sealed class MainForm : Form
                 {
                     if (!IsDisposed && (_currentPage == "mining" || _currentPage == "subminer"))
                     {
-                        _gpuMiningState.Text = _gpuStatusText;
-                        _miningHashrate.Text = _gpuHashrateText;
+                        _gpuMiningState.Text = TranslateUiText(_gpuStatusText);
+                        _miningHashrate.Text = TranslateUiText(_gpuHashrateText);
                     }
                 }));
             }
@@ -2963,11 +3170,17 @@ internal sealed class MainForm : Form
 
     private async Task RefreshTransactionsAsync()
     {
-        if (_loadingTransactions || _rpc is null || _currentPage != "transactions" || _transactionGrid is null) return;
+        if (_loadingTransactions || _currentPage != "transactions" || _transactionGrid is null) return;
+        if (_rpc is null)
+        {
+            _transactionsAutoLoadPending = true;
+            return;
+        }
+        _transactionsAutoLoadPending = false;
         DataGridView grid = _transactionGrid;
         _loadingTransactions = true;
         _refreshTransactionsButton.Enabled = false;
-        _transactionStatus.Text = "Обновляю историю кошелька…";
+        _transactionStatus.Text = TranslateUiText("Обновляю историю кошелька…");
         try
         {
             JsonElement result = await _rpc.CallAsync("listtransactions", new object[] { "*", 100, 0, true });
@@ -3002,8 +3215,8 @@ internal sealed class MainForm : Form
                     _ => $"{confirmations:N0} подтв."
                 };
                 string date = FormatTransactionTime(entry);
-                int rowIndex = grid.Rows.Add(date, operation, FormatGcAmount(amount, includePositiveSign: true),
-                    fee == 0 ? "—" : Math.Abs(fee).ToString("0.########", UiLocalization.Culture(_uiLanguage)) + " GC", status, address);
+                int rowIndex = grid.Rows.Add(date, TranslateUiText(operation), FormatGcAmount(amount, includePositiveSign: true),
+                    fee == 0 ? "—" : Math.Abs(fee).ToString("0.########", UiLocalization.Culture(_uiLanguage)) + " GC", TranslateUiText(status), address);
                 DataGridViewRow row = grid.Rows[rowIndex];
                 row.Tag = txid;
                 row.Cells[5].ToolTipText = address;
@@ -3016,24 +3229,24 @@ internal sealed class MainForm : Form
                 grid.Rows[0].Selected = true;
                 _selectedTransactionId = grid.Rows[0].Tag as string;
                 _transactionDetails.Text = string.IsNullOrWhiteSpace(_selectedTransactionId)
-                    ? "Выберите запись, чтобы посмотреть номер транзакции."
-                    : "ID транзакции: " + _selectedTransactionId;
+                    ? TranslateUiText("Выберите запись, чтобы посмотреть номер транзакции.")
+                    : TranslateUiText("ID транзакции: " + _selectedTransactionId);
                 _copyTransactionIdButton.Enabled = !string.IsNullOrWhiteSpace(_selectedTransactionId);
             }
             else
             {
                 _selectedTransactionId = null;
-                _transactionDetails.Text = "Выберите запись, чтобы посмотреть номер транзакции.";
+                _transactionDetails.Text = TranslateUiText("Выберите запись, чтобы посмотреть номер транзакции.");
                 _copyTransactionIdButton.Enabled = false;
             }
-            _transactionStatus.Text = grid.Rows.Count == 0
+            _transactionStatus.Text = TranslateUiText(grid.Rows.Count == 0
                 ? "В истории пока нет операций. После синхронизации обновите список."
-                : $"Показаны последние {grid.Rows.Count} записей. Разные выходы одной транзакции могут отображаться отдельно.";
+                : $"Показаны последние {grid.Rows.Count} записей. Разные выходы одной транзакции могут отображаться отдельно.");
         }
         catch (Exception ex)
         {
             if (ReferenceEquals(grid, _transactionGrid))
-                _transactionStatus.Text = "Не удалось загрузить историю: " + ex.Message;
+                _transactionStatus.Text = TranslateUiText("Не удалось загрузить историю: " + ex.Message);
         }
         finally
         {
@@ -3488,6 +3701,9 @@ internal sealed class MainForm : Form
             }
             RefreshMiningControls();
             if (_currentPage == "node") UpdateNodePage();
+            if (_transactionsAutoLoadPending && _currentPage == "transactions" && !_loadingTransactions &&
+                _rpc is not null && File.Exists(AppPaths.WalletPath))
+                _ = RefreshTransactionsAsync();
         }
     }
 
@@ -3495,36 +3711,38 @@ internal sealed class MainForm : Form
     {
         if (_currentPage == "subminer" && !IsDisposed)
         {
-            _gpuMiningState.Text = _gpuStatusText;
-            _miningHashrate.Text = _gpuHashrateText;
-            _remoteGpuButton.Text = _remoteGpuMining ? "Остановить подмайнер" : _startingRemoteGpu ? "Подключаюсь…" : "Подключить и начать GPU-майнинг";
+            _gpuMiningState.Text = TranslateUiText(_gpuStatusText);
+            _miningHashrate.Text = TranslateUiText(_gpuHashrateText);
+            _remoteGpuButton.Text = TranslateUiText(_remoteGpuMining ? "Остановить подмайнер" : _startingRemoteGpu ? "Подключаюсь…" : "Подключить и начать GPU-майнинг");
             _remoteGpuButton.Enabled = _remoteGpuMining || (!_startingRemoteGpu && !_checkingGpuDevices && !IsNodeRunning() &&
-                _gpuMinerProcess is null && _remoteGpuDeviceCombo.SelectedItem is GpuDevice);
-            _remoteGpuDeviceCombo.Enabled = !_remoteGpuMining;
+                _gpuMinerProcess is null && SelectedGpuDevices().Count > 0);
+            _remoteGpuBackendCombo.Enabled = !_remoteGpuMining && !_startingRemoteGpu;
+            _remoteGpuDeviceList.Enabled = !_remoteGpuMining && !_startingRemoteGpu && _remoteGpuDeviceList.Items.Count > 0;
             _remoteGpuFindButton.Enabled = !_remoteGpuMining && !_checkingGpuDevices;
         }
         if (_currentPage != "mining" || IsDisposed) return;
-        _miningState.Text = _cpuMiningActive
+        _miningState.Text = TranslateUiText(_cpuMiningActive
             ? $"CPU-майнинг включён · потоков: {_selectedThreads}"
-            : "CPU-майнинг остановлен";
+            : "CPU-майнинг остановлен");
         _miningState.ForeColor = _cpuMiningActive ? Success : Muted;
-        _cpuHashrate.Text = _cpuMiningActive
+        _cpuHashrate.Text = TranslateUiText(_cpuMiningActive
             ? $"Скорость CPU: {FormatHashrate(_cpuHashrateValue)}"
-            : "Скорость CPU: —";
+            : "Скорость CPU: —");
         _threadCount.Enabled = !_cpuMiningActive;
-        _mineButton.Text = _cpuMiningActive ? "Остановить CPU" : "Запустить CPU";
+        _mineButton.Text = TranslateUiText(_cpuMiningActive ? "Остановить CPU" : "Запустить CPU");
         _mineButton.Enabled = IsNodeRunning() && File.Exists(AppPaths.WalletPath);
 
-        _gpuMiningState.Text = _gpuStatusText;
+        _gpuMiningState.Text = TranslateUiText(_gpuStatusText);
         _gpuMiningState.ForeColor = _gpuMiningActive ? Success : Muted;
-        _miningHashrate.Text = _gpuHashrateText;
+        _miningHashrate.Text = TranslateUiText(_gpuHashrateText);
         _gpuRewardAddress.Text = string.IsNullOrWhiteSpace(_lastAddress)
-            ? "Адрес награды будет взят из текущего кошелька."
-            : "Адрес награды: " + _lastAddress;
-        _gpuMineButton.Text = _remoteGpuMining ? "Перейти к подмайнеру" : _gpuMiningActive ? "Остановить GPU" : "Запустить GPU";
+            ? TranslateUiText("Адрес награды будет взят из текущего кошелька.")
+            : TranslateUiText("Адрес награды: " + _lastAddress);
+        _gpuMineButton.Text = TranslateUiText(_remoteGpuMining ? "Перейти к подмайнеру" : _gpuMiningActive ? "Остановить GPU" : "Запустить GPU");
         _gpuMineButton.Enabled = _remoteGpuMining || (IsNodeRunning() && File.Exists(AppPaths.WalletPath) &&
-            (_gpuMiningActive || _gpuDeviceCombo.SelectedItem is GpuDevice));
-        _gpuDeviceCombo.Enabled = !_gpuMiningActive;
+            (_gpuMiningActive || SelectedGpuDevices().Count > 0));
+        _gpuBackendCombo.Enabled = !_gpuMiningActive;
+        _gpuDeviceList.Enabled = !_gpuMiningActive && _gpuDeviceList.Items.Count > 0;
         _refreshGpuButton.Enabled = !_gpuMiningActive && !_checkingGpuDevices;
     }
 
@@ -3625,6 +3843,7 @@ internal sealed class MainForm : Form
         if (_startingNode || _startingRemoteGpu)
         {
             e.Cancel = true;
+            ClearPendingUpdateInstaller(ref _updateInstallerToLaunch);
             ShowLocalizedMessage("Дождитесь завершения запуска узла или подмайнера, затем повторите выход.",
                 "Выполняется запуск", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
@@ -3649,6 +3868,7 @@ internal sealed class MainForm : Form
                 Close();
             }
         }
+        else ClearPendingUpdateInstaller(ref _updateInstallerToLaunch);
         _closePromptOpen = false;
     }
 
@@ -3859,6 +4079,142 @@ internal sealed class MainForm : Form
         _languageCombo.SelectedIndex = selectedIndex >= 0 ? selectedIndex : 0;
     }
 
+    private async Task CheckForUpdatesAsync()
+    {
+        if (!_checkUpdatesButton.Enabled) return;
+        _checkUpdatesButton.Enabled = false;
+        _checkUpdatesButton.Text = TranslateUiText("Проверяю обновления…");
+        string? downloadedInstaller = null;
+        try
+        {
+            using var client = new HttpClient { Timeout = TimeSpan.FromMinutes(5) };
+            client.DefaultRequestHeaders.UserAgent.ParseAdd("GeoCoin-Start");
+            client.DefaultRequestHeaders.Accept.ParseAdd("application/vnd.github+json");
+            using HttpResponseMessage response = await client.GetAsync(AppPaths.LatestReleaseApiUrl);
+            response.EnsureSuccessStatusCode();
+            using JsonDocument releaseDocument = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            JsonElement release = releaseDocument.RootElement;
+            string tag = ReadString(release, "tag_name");
+            if (!TryParseReleaseVersion(tag, out Version? latestVersion) ||
+                !TryParseReleaseVersion(AppPaths.AppVersion, out Version? currentVersion))
+                throw new InvalidDataException("В релизе указан некорректный номер версии.");
+
+            if (latestVersion <= currentVersion)
+            {
+                ShowLocalizedMessage("У вас установлена последняя версия GeoCoin-Start.", "Проверить обновления",
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            JsonElement setupAsset = default;
+            JsonElement checksumAsset = default;
+            if (release.TryGetProperty("assets", out JsonElement assets) && assets.ValueKind == JsonValueKind.Array)
+            {
+                foreach (JsonElement asset in assets.EnumerateArray())
+                {
+                    string name = ReadString(asset, "name");
+                    if (name.Equals("GeoCoin-Start-Setup.exe", StringComparison.OrdinalIgnoreCase)) setupAsset = asset;
+                    else if (name.Equals("SHA256SUMS.txt", StringComparison.OrdinalIgnoreCase)) checksumAsset = asset;
+                }
+            }
+            if (setupAsset.ValueKind != JsonValueKind.Object)
+                throw new InvalidDataException("Последний релиз не содержит установщик GeoCoin-Start.");
+            string downloadUrl = ReadString(setupAsset, "browser_download_url");
+            if (string.IsNullOrWhiteSpace(downloadUrl) || !Uri.TryCreate(downloadUrl, UriKind.Absolute, out Uri? setupUri) || setupUri.Scheme != Uri.UriSchemeHttps ||
+                !setupUri.Host.Equals("github.com", StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException("Последний релиз не содержит установщик GeoCoin-Start.");
+
+            string expectedHash = ReadString(setupAsset, "digest");
+            if (expectedHash.StartsWith("sha256:", StringComparison.OrdinalIgnoreCase))
+                expectedHash = expectedHash[7..];
+            if (!IsSha256Hex(expectedHash))
+            {
+                if (checksumAsset.ValueKind != JsonValueKind.Object)
+                    throw new InvalidDataException("В последнем релизе нет контрольной суммы установщика.");
+                string checksumUrl = ReadString(checksumAsset, "browser_download_url");
+                if (!Uri.TryCreate(checksumUrl, UriKind.Absolute, out Uri? checksumUri) ||
+                    checksumUri.Scheme != Uri.UriSchemeHttps || !checksumUri.Host.Equals("github.com", StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidDataException("В последнем релизе нет контрольной суммы установщика.");
+                using HttpResponseMessage checksumResponse = await client.GetAsync(checksumUri);
+                checksumResponse.EnsureSuccessStatusCode();
+                string checksumText = await checksumResponse.Content.ReadAsStringAsync();
+                string? checksumLine = checksumText.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
+                    .FirstOrDefault(line => line.Contains("GeoCoin-Start-Setup.exe", StringComparison.OrdinalIgnoreCase));
+                expectedHash = checksumLine?.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() ?? "";
+            }
+            if (!IsSha256Hex(expectedHash))
+                throw new InvalidDataException("В последнем релизе нет корректной SHA-256 суммы установщика.");
+
+            string message = TranslateUiText("Доступна версия GeoCoin-Start: ") + tag + Environment.NewLine + Environment.NewLine +
+                TranslateUiText("Скачать и установить это обновление? Приложение закроется. Нода и майнер будут остановлены штатно.");
+            DialogResult install = MessageBox.Show(this, message, TranslateUiText("Доступно обновление"),
+                MessageBoxButtons.YesNo, MessageBoxIcon.Information, MessageBoxDefaultButton.Button1);
+            if (install != DialogResult.Yes) return;
+
+            _checkUpdatesButton.Text = TranslateUiText("Скачиваю установщик обновления…");
+            downloadedInstaller = Path.Combine(Path.GetTempPath(), $"GeoCoin-Start-Update-{Guid.NewGuid():N}.exe");
+            using (HttpResponseMessage installerResponse = await client.GetAsync(setupUri, HttpCompletionOption.ResponseHeadersRead))
+            {
+                installerResponse.EnsureSuccessStatusCode();
+                await using Stream source = await installerResponse.Content.ReadAsStreamAsync();
+                await using var destination = new FileStream(downloadedInstaller, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+                await source.CopyToAsync(destination);
+            }
+
+            await using (FileStream installerFile = File.OpenRead(downloadedInstaller))
+            {
+                string actualHash = Convert.ToHexString(await SHA256.HashDataAsync(installerFile));
+                if (!actualHash.Equals(expectedHash, StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidDataException("Проверка SHA-256 загруженного установщика не пройдена.");
+            }
+            if (IsDisposed || !IsHandleCreated)
+            {
+                try { File.Delete(downloadedInstaller); } catch { }
+                downloadedInstaller = null;
+                return;
+            }
+
+            _updateInstallerToLaunch = downloadedInstaller;
+            downloadedInstaller = null;
+            Close();
+        }
+        catch (Exception ex)
+        {
+            if (downloadedInstaller is not null)
+            {
+                try { File.Delete(downloadedInstaller); } catch { }
+            }
+            if (!IsDisposed)
+                ShowLocalizedMessage("Не удалось проверить обновления: " + ex.Message, "Ошибка обновления",
+                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+        finally
+        {
+            if (!IsDisposed)
+            {
+                _checkUpdatesButton.Enabled = true;
+                _checkUpdatesButton.Text = TranslateUiText("Проверить обновления");
+            }
+        }
+    }
+
+    private static bool TryParseReleaseVersion(string text, out Version? version)
+    {
+        string value = text.Trim();
+        if (value.StartsWith('v') || value.StartsWith('V')) value = value[1..];
+        return Version.TryParse(value, out version);
+    }
+
+    private static bool IsSha256Hex(string value)
+        => value.Length == 64 && value.All(Uri.IsHexDigit);
+
+    private static void ClearPendingUpdateInstaller(ref string? installerPath)
+    {
+        if (installerPath is null) return;
+        try { File.Delete(installerPath); } catch { }
+        installerPath = null;
+    }
+
     private DialogResult ShowLocalizedMessage(string message, string caption, MessageBoxButtons buttons, MessageBoxIcon icon,
         MessageBoxDefaultButton defaultButton = MessageBoxDefaultButton.Button1)
         => MessageBox.Show(this, TranslateUiText(message), TranslateUiText(caption), buttons, icon, defaultButton);
@@ -3919,13 +4275,25 @@ internal sealed class MainForm : Form
             {
                 string remainder = value[from.Length..];
                 if (english)
+                {
                     remainder = remainder.Replace(" блоков", " blocks", StringComparison.Ordinal)
                         .Replace(" блока", " blocks", StringComparison.Ordinal).Replace(" блок", " block", StringComparison.Ordinal)
                         .Replace(". Экспорт ключа создаёт незашифрованный текстовый файл.", ". Exporting a key creates an unencrypted text file.", StringComparison.Ordinal);
+                    remainder = remainder.Replace("ПХеш/с", "PHash/s", StringComparison.Ordinal)
+                        .Replace("ТХеш/с", "THash/s", StringComparison.Ordinal).Replace("ГХеш/с", "GHash/s", StringComparison.Ordinal)
+                        .Replace("МХеш/с", "MHash/s", StringComparison.Ordinal).Replace("кХеш/с", "kHash/s", StringComparison.Ordinal)
+                        .Replace("хеш/с", "hash/s", StringComparison.Ordinal);
+                }
                 else
+                {
                     remainder = remainder.Replace(" blocks", " блоков", StringComparison.Ordinal)
                         .Replace(" block", " блок", StringComparison.Ordinal)
                         .Replace(". Exporting a key creates an unencrypted text file.", ". Экспорт ключа создаёт незашифрованный текстовый файл.", StringComparison.Ordinal);
+                    remainder = remainder.Replace("PHash/s", "ПХеш/с", StringComparison.Ordinal)
+                        .Replace("THash/s", "ТХеш/с", StringComparison.Ordinal).Replace("GHash/s", "ГХеш/с", StringComparison.Ordinal)
+                        .Replace("MHash/s", "МХеш/с", StringComparison.Ordinal).Replace("kHash/s", "кХеш/с", StringComparison.Ordinal)
+                        .Replace("hash/s", "хеш/с", StringComparison.Ordinal);
+                }
                 return (english ? target : source) + remainder;
             }
         }
@@ -3933,11 +4301,25 @@ internal sealed class MainForm : Form
         {
             value = value.Replace("     Узлов сети: ", "     Network peers: ", StringComparison.Ordinal)
                 .Replace(" · подключений: ", " · connections: ", StringComparison.Ordinal);
+            (string Russian, string English)[] hashUnits =
+            {
+                ("ПХеш/с", "PHash/s"), ("ТХеш/с", "THash/s"), ("ГХеш/с", "GHash/s"),
+                ("МХеш/с", "MHash/s"), ("кХеш/с", "kHash/s"), ("хеш/с", "hash/s")
+            };
+            foreach ((string russian, string translated) in hashUnits)
+                value = value.Replace(russian, translated, StringComparison.Ordinal);
         }
         else
         {
             value = value.Replace("     Network peers: ", "     Узлов сети: ", StringComparison.Ordinal)
                 .Replace(" · connections: ", " · подключений: ", StringComparison.Ordinal);
+            (string English, string Russian)[] hashUnits =
+            {
+                ("PHash/s", "ПХеш/с"), ("THash/s", "ТХеш/с"), ("GHash/s", "ГХеш/с"),
+                ("MHash/s", "МХеш/с"), ("kHash/s", "кХеш/с"), ("hash/s", "хеш/с")
+            };
+            foreach ((string englishUnit, string translated) in hashUnits)
+                value = value.Replace(englishUnit, translated, StringComparison.Ordinal);
         }
         return value;
     }
