@@ -359,6 +359,13 @@ internal sealed class InstallerForm : Form
         }
     }
 
+    private static bool IsExcludedOfficialEntry(string archivePath)
+    {
+        string normalized = archivePath.Replace('\\', '/').TrimStart('/');
+        return normalized.Equals("bin/geocoin-core.exe", StringComparison.OrdinalIgnoreCase) ||
+               normalized.EndsWith("/bin/geocoin-core.exe", StringComparison.OrdinalIgnoreCase);
+    }
+
     private static async Task InstallAsync(IProgress<InstallProgress> progress, string language)
     {
         Directory.CreateDirectory(AppPaths.InstallDirectory);
@@ -409,7 +416,13 @@ internal sealed class InstallerForm : Form
                     if (!destination.StartsWith(root, StringComparison.OrdinalIgnoreCase))
                         throw new InvalidDataException("В архиве обнаружен недопустимый путь.");
 
-                    if (entry.FullName.EndsWith('/') || entry.FullName.EndsWith('\\'))
+                    if (IsExcludedOfficialEntry(entry.FullName))
+                    {
+                        // It belongs to the original Qt wallet, not GeoCoin-Start. Remove
+                        // copies left by an older install while keeping the source archive intact.
+                        if (File.Exists(destination)) File.Delete(destination);
+                    }
+                    else if (entry.FullName.EndsWith('/') || entry.FullName.EndsWith('\\'))
                     {
                         Directory.CreateDirectory(destination);
                     }
@@ -446,7 +459,7 @@ internal sealed class InstallerForm : Form
                 Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), "GeoCoin-Start.lnk"));
             string startMenu = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.StartMenu), "Programs", "GeoCoin-Start");
             Directory.CreateDirectory(startMenu);
-            TryCreateShortcut(installedExe, Path.Combine(startMenu, "GeoCoin-Start.lnk"));
+            TryCreateShortcut(installedExe, Path.Combine(startMenu, "GeoCoin-Start.lnk"), appUserModelId: AppPaths.ToastAppUserModelId);
             string uninstallerName = language == "ru" ? "Удалить GeoCoin-Start" : UiLocalization.TranslateFromEnglish(language, "Uninstall GeoCoin-Start");
             string shortcutDescription = language == "ru" ? "Простой интерфейс GeoCoin" : UiLocalization.TranslateFromEnglish(language, "Simple GeoCoin interface");
             TryCreateShortcut(installedExe, Path.Combine(startMenu, uninstallerName + ".lnk"), "--uninstall", shortcutDescription);
@@ -471,7 +484,8 @@ internal sealed class InstallerForm : Form
         key.SetValue("NoRepair", 1, Microsoft.Win32.RegistryValueKind.DWord);
     }
 
-    private static void TryCreateShortcut(string target, string shortcutPath, string? arguments = null, string? description = null)
+    private static void TryCreateShortcut(string target, string shortcutPath, string? arguments = null, string? description = null,
+        string? appUserModelId = null)
     {
         object? shell = null;
         object? shortcut = null;
@@ -489,6 +503,8 @@ internal sealed class InstallerForm : Form
             link.WorkingDirectory = AppPaths.InstallDirectory;
             link.Description = description ?? "Простой интерфейс GeoCoin";
             link.Save();
+            if (!string.IsNullOrWhiteSpace(appUserModelId))
+                WindowsShellProperties.SetShortcutAppUserModelId(shortcutPath, appUserModelId);
         }
         catch { }
         finally

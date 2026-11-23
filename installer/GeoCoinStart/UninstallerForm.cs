@@ -174,6 +174,7 @@ internal sealed class UninstallerForm : Form
         string helperPath = Environment.ProcessPath ?? "";
         string startMenu = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.StartMenu), "Programs", "GeoCoin-Start");
         string desktopShortcut = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), "GeoCoin-Start.lnk");
+        try { StartupRegistration.Remove(); } catch { }
         try { Directory.Delete(AppPaths.InstallDirectory, recursive: true); } catch { }
         try { Directory.Delete(AppPaths.NodeSessionDirectory, recursive: true); } catch { }
         try { Directory.Delete(startMenu, recursive: true); } catch { }

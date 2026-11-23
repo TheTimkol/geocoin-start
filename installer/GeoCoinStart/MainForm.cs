@@ -20,6 +20,15 @@ internal sealed class MainForm : Form
         [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
         public Action<int>? ForwardWheelToPage { get; set; }
 
+        protected override void OnHandleCreated(EventArgs e)
+        {
+            base.OnHandleCreated(e);
+            _ = SetWindowTheme(Handle, string.Empty, string.Empty);
+        }
+
+        [System.Runtime.InteropServices.DllImport("uxtheme.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+        private static extern int SetWindowTheme(IntPtr hwnd, string applicationName, string subIdList);
+
         protected override void OnMouseWheel(MouseEventArgs e)
         {
             if (DroppedDown)
@@ -53,6 +62,101 @@ internal sealed class MainForm : Form
         }
     }
 
+    private sealed class GuideProgressTile : Panel
+    {
+        [System.ComponentModel.Browsable(false)]
+        [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
+        public int StepNumber { get; init; }
+        [System.ComponentModel.Browsable(false)]
+        [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
+        public int ProgressPercent { get; init; }
+        [System.ComponentModel.Browsable(false)]
+        [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
+        public bool IsCurrent { get; init; }
+        [System.ComponentModel.Browsable(false)]
+        [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
+        public Color BorderColor { get; init; }
+        [System.ComponentModel.Browsable(false)]
+        [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
+        public Color TrackColor { get; init; }
+        [System.ComponentModel.Browsable(false)]
+        [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
+        public Color ProgressColor { get; init; }
+
+        public GuideProgressTile()
+        {
+            SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, true);
+            TabStop = false;
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            base.OnPaint(e);
+            float scale = Math.Max(1f, DeviceDpi / 96f);
+            e.Graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+            var bounds = new Rectangle(0, 0, Math.Max(0, Width - 1), Math.Max(0, Height - 1));
+            using (var border = new Pen(BorderColor, Math.Max(1f, scale)))
+                e.Graphics.DrawRectangle(border, bounds);
+
+            int iconSize = Math.Max(16, (int)Math.Round(20 * scale));
+            int iconX = (int)Math.Round(10 * scale);
+            int iconY = (int)Math.Round(10 * scale);
+            var icon = new Rectangle(iconX, iconY, iconSize, iconSize);
+            if (ProgressPercent >= 100)
+            {
+                using var fill = new SolidBrush(ProgressColor);
+                e.Graphics.FillEllipse(fill, icon);
+                using var check = new Pen(Color.White, Math.Max(1.5f, 2f * scale)) { StartCap = System.Drawing.Drawing2D.LineCap.Round, EndCap = System.Drawing.Drawing2D.LineCap.Round };
+                e.Graphics.DrawLines(check, new[]
+                {
+                    new PointF(icon.Left + iconSize * 0.24f, icon.Top + iconSize * 0.53f),
+                    new PointF(icon.Left + iconSize * 0.43f, icon.Top + iconSize * 0.70f),
+                    new PointF(icon.Left + iconSize * 0.77f, icon.Top + iconSize * 0.32f)
+                });
+            }
+            else
+            {
+                using var outline = new Pen(IsCurrent ? ProgressColor : BorderColor, Math.Max(1.3f, 1.7f * scale));
+                e.Graphics.DrawEllipse(outline, icon);
+                TextRenderer.DrawText(e.Graphics, StepNumber.ToString(CultureInfo.InvariantCulture), Font, icon, ForeColor,
+                    TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine);
+            }
+
+            int titleX = icon.Right + (int)Math.Round(8 * scale);
+            int titleY = (int)Math.Round(7 * scale);
+            var titleBounds = new Rectangle(titleX, titleY, Math.Max(12, Width - titleX - (int)Math.Round(8 * scale)),
+                Math.Max(iconSize, (int)Math.Round(26 * scale)));
+            TextRenderer.DrawText(e.Graphics, Text, Font, titleBounds, ForeColor,
+                TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.SingleLine);
+
+            int barY = Height - (int)Math.Round(14 * scale);
+            int percentWidth = (int)Math.Round(38 * scale);
+            var track = new Rectangle(iconX, barY, Math.Max(8, Width - iconX - percentWidth - (int)Math.Round(14 * scale)),
+                Math.Max(3, (int)Math.Round(4 * scale)));
+            using (var trackBrush = new SolidBrush(TrackColor)) e.Graphics.FillRectangle(trackBrush, track);
+            int progressWidth = (int)Math.Round(track.Width * Math.Clamp(ProgressPercent, 0, 100) / 100d);
+            if (progressWidth > 0)
+            {
+                using var progressBrush = new SolidBrush(ProgressColor);
+                e.Graphics.FillRectangle(progressBrush, new Rectangle(track.Location, new Size(progressWidth, track.Height)));
+            }
+            var percentBounds = new Rectangle(track.Right + (int)Math.Round(5 * scale), barY - (int)Math.Round(7 * scale),
+                percentWidth, (int)Math.Round(18 * scale));
+            TextRenderer.DrawText(e.Graphics, $"{Math.Clamp(ProgressPercent, 0, 100)}%", Font, percentBounds, ForeColor,
+                TextFormatFlags.Right | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine);
+        }
+    }
+
+    private sealed class UserActivityMessageFilter(Action onActivity) : IMessageFilter
+    {
+        public bool PreFilterMessage(ref Message m)
+        {
+            if (m.Msg is 0x0100 or 0x0104 or 0x0200 or 0x0201 or 0x0204 or 0x0207 or 0x020A)
+                onActivity();
+            return false;
+        }
+    }
+
     private sealed record GpuDevice(string Backend, string Id, string Name)
     {
         public override string ToString() => $"{Name} — {Backend.ToUpperInvariant()} · {Id}";
@@ -64,6 +168,19 @@ internal sealed class MainForm : Form
     }
 
     private sealed record FeeEstimate(decimal ApproximateGc, decimal MinimumGc, decimal RateGcPerKb, int AssumedBytes);
+
+    private sealed record PeerDiagnostic(
+        string Address,
+        bool Connected,
+        bool PortRefused,
+        bool OtherFailure,
+        bool InProgress,
+        bool Inbound,
+        bool Encrypted,
+        string State,
+        int PingMilliseconds,
+        int FailureCount,
+        string Error);
 
     private sealed record MinedBlockRecord(string BlockId, string TransactionId, long Timestamp, string Source);
     private sealed class MinedBlockLedger
@@ -105,6 +222,112 @@ internal sealed class MainForm : Form
         ["ПРОСТОЙ КОШЕЛЁК"] = "SIMPLE WALLET",
         ["Обзор"] = "Overview", ["Майнинг"] = "Mining", ["Подмайнер"] = "Subminer", ["Нода"] = "Node",
         ["Отправить"] = "Send", ["Получить"] = "Receive", ["История"] = "History", ["Кошелёк"] = "Wallet",
+        ["Помощник"] = "Guide", ["Настройки"] = "Settings", ["Помощник первого запуска"] = "First-run guide",
+        ["Шаг 1 из 4 · Подключите ноду"] = "Step 1 of 4 · Connect the node",
+        ["Шаг 2 из 4 · Создайте или добавьте кошелёк"] = "Step 2 of 4 · Create or add a wallet",
+        ["Шаг 3 из 4 · Сохраните резервную копию"] = "Step 3 of 4 · Save a backup",
+        ["Шаг 4 из 4 · Завершите обучение"] = "Step 4 of 4 · Finish the guide",
+        ["Обучение пройдено"] = "Training completed",
+        ["Обучение пройдено. Ваш прогресс сохранён, пользоваться приложением можно через меню."] = "Training completed. Your progress is saved. Use the app menu to continue.",
+        ["Обучение завершено. Статус сохранён на этом компьютере; при следующем открытии помощника вы увидите этот результат."] = "Training completed. Your status is saved on this computer and will appear when you reopen the guide.",
+        ["Основные шаги выполнены. Майнинг и создание адреса остаются на ваше усмотрение. Нажмите кнопку, чтобы сохранить прохождение помощника."] = "The required steps are complete. Mining and creating a receiving address are optional. Finish the guide to save your progress.",
+        ["БЕЗОПАСНОСТЬ"] = "SECURITY", ["Длина PIN"] = "PIN length", ["Текущий PIN"] = "Current PIN",
+        ["Новый PIN"] = "New PIN", ["Повторите новый PIN"] = "Confirm new PIN",
+        ["СИСТЕМНЫЕ УВЕДОМЛЕНИЯ"] = "SYSTEM NOTIFICATIONS", ["Показывать уведомления Windows"] = "Show Windows notifications",
+        ["Сохранить уведомления"] = "Save notification settings",
+        ["Входящий перевод"] = "Incoming transfer",
+        ["Отправленный перевод принят нодой"] = "Outgoing transfer accepted by node",
+        ["АВТОЗАПУСК"] = "STARTUP",
+        ["Запускать GeoCoin-Start при входе в Windows"] = "Start GeoCoin-Start when I sign in to Windows",
+        ["Автозапуск открывает только приложение; запуск ноды и майнинга остаётся под вашим контролем."] = "Autostart only opens the app; the node and mining remain under your control.",
+        ["Ошибка автозапуска"] = "Startup setting error",
+        ["Отправить тестовое уведомление"] = "Send a test notification",
+        ["Включите и сохраните системные уведомления, чтобы отправить тест."] = "Enable and save system notifications to send a test.",
+        ["Уведомления выключены"] = "Notifications are off",
+        ["Тестовое уведомление GeoCoin-Start"] = "GeoCoin-Start test notification",
+        ["Системные уведомления приложения включены."] = "System notifications are enabled.",
+        ["Нода остановилась или потеряла соединение"] = "Node stopped or lost connection",
+        ["Нода завершила синхронизацию"] = "Node finished syncing", ["Обнаружена новая награда за майнинг"] = "A new mining reward was detected",
+        ["Новый входящий перевод GeoCoin"] = "New incoming GeoCoin transfer",
+        ["Входящий перевод появился в истории кошелька. Откройте историю для подробностей."] = "A new incoming transfer appeared in wallet history. Open History for details.",
+        ["Перевод отправлен"] = "Transfer sent",
+        ["Нода приняла перевод к отправке. Он ещё не подтверждён в блоке."] = "The node accepted the transfer for broadcast. It is not confirmed in a block yet.",
+        ["Автоматически блокировать после 10 минут бездействия"] = "Lock automatically after 10 minutes of inactivity",
+        ["Включить PIN и сохранить"] = "Enable PIN and save", ["Сохранить PIN и настройки"] = "Save PIN and settings",
+        ["Настроить PIN-защиту"] = "Set up PIN protection",
+        ["Отключить PIN"] = "Disable PIN", ["Заблокировать"] = "Lock now", ["Разблокировать"] = "Unlock",
+        ["Windows Hello"] = "Windows Hello", ["Разрешить разблокировку с помощью Windows Hello"] = "Allow unlocking with Windows Hello",
+        ["GeoCoin-Start заблокирован"] = "GeoCoin-Start is locked",
+        ["Введите текущий PIN, чтобы изменить способ разблокировки."] = "Enter the current PIN to change the unlock method.",
+        ["Windows Hello доступен начиная с Windows 11. Используйте PIN-код приложения."] = "Windows Hello is available on Windows 11 or later. Use the app PIN.",
+        ["Подтвердите личность, чтобы разблокировать GeoCoin-Start."] = "Verify your identity to unlock GeoCoin-Start.",
+        ["Windows Hello не подтвердил вход. Можно попробовать ещё раз или ввести PIN."] = "Windows Hello did not verify you. Try again or enter your PIN.",
+        ["Windows Hello недоступен. Используйте PIN-код приложения."] = "Windows Hello is unavailable. Use the app PIN.",
+        ["Открытие кошелька"] = "Open wallet", ["Создание кошелька"] = "Create wallet",
+        ["Подтвердите действие"] = "Confirm action", ["Пароль кошелька"] = "Wallet password",
+        ["Повторите пароль"] = "Confirm password", ["Отмена"] = "Cancel", ["Продолжить"] = "Continue",
+        ["Да"] = "Yes", ["Нет"] = "No", ["ОК"] = "OK",
+        ["Создать"] = "Create", ["Защита кошелька"] = "Wallet security", ["Пароли не совпадают."] = "The passwords do not match.",
+        ["Введите пароль этого файла кошелька. Если файл не защищён паролем, оставьте поле пустым."] = "Enter this wallet file's password. If the file is not password-protected, leave the field empty.",
+        ["Придумайте пароль и сохраните его отдельно. Без него открыть кошелёк и отправить монеты не получится."] = "Choose a password and store it separately. You will need it to open the wallet and send coins.",
+        ["Введите пароль кошелька, чтобы создать адрес для получения."] = "Enter the wallet password to create a receiving address.",
+        ["Введите пароль кошелька, чтобы импортировать приватный ключ."] = "Enter the wallet password to import a private key.",
+        ["Введите пароль кошелька, чтобы экспортировать приватный ключ выбранного адреса."] = "Enter the wallet password to export the selected address's private key.",
+        ["Я сохранил резервную копию"] = "I saved a backup", ["Завершить помощник"] = "Finish guide",
+        ["Резервная копия"] = "Backup", ["Первый перевод или майнинг"] = "First transfer or mining",
+        ["Пока пропустить помощник"] = "Skip the guide for now", ["Открыть помощник первого запуска"] = "Open the first-run guide",
+        ["Открыть резервные копии"] = "Open wallet backup", ["Экспортировать копию сейчас"] = "Export a backup now",
+        ["Этот формат кошелька нужно копировать при остановленной ноде. Сначала остановите майнинг, затем повторите резервное копирование."] = "This wallet format must be backed up while the node is stopped. Stop mining first, then try again.",
+        ["Остановите майнинг"] = "Stop mining",
+        ["Этот файл кошелька нельзя скопировать через RPC. GeoCoin-Start может безопасно остановить ноду, скопировать файл и затем запустить ноду снова. При запуске может потребоваться пароль кошелька. Продолжить?"] = "This wallet file cannot be backed up through RPC. GeoCoin-Start can safely stop the node, copy the file, and restart the node. You may need the wallet password when it starts. Continue?",
+        ["Создать резервную копию"] = "Create a wallet backup",
+        ["Копия кошелька сохранена. Храните её отдельно от компьютера; для защищённого файла также сохраните пароль."] = "The wallet backup was saved. Store it separately from this computer, and keep the password for an encrypted wallet file.",
+        ["Копия готова"] = "Backup complete",
+        ["Копия создана, но нода осталась остановлена. Запустите её снова со страницы «Нода»."] = "The backup was created, but the node is still stopped. Start it again from the Node page.",
+        ["Не удалось безопасно создать копию кошелька: "] = "Could not safely create the wallet backup: ",
+        ["Не удалось создать копию"] = "Could not create backup",
+        ["Записей на странице"] = "Rows per page", ["Показаны записи "] = "Showing entries ",
+        ["Записей:"] = "Rows:",
+        ["Управляйте защитой приложения, системными уведомлениями, автозапуском и первым запуском."] = "Manage app security, system notifications, startup, and the first-run guide.",
+        ["PIN-код ограничивает доступ к окну приложения. Для защиты средств используйте пароль кошелька и храните резервную копию отдельно."] = "The PIN limits access to the app window. Protect your funds with the wallet password and store a backup separately.",
+        ["Перейти к майнингу"] = "Go to mining", ["Открыть получение монет"] = "Open Receive",
+        ["Запустить ноду"] = "Start node", ["Создать кошелёк"] = "Create wallet",
+        ["Импортировать кошелёк"] = "Import wallet", ["Открыть страницу ноды"] = "Open node page",
+        ["Текущая информация"] = "Current information", ["Введите PIN-код приложения"] = "Enter your app PIN",
+        ["PIN-защита включена для текущей учётной записи Windows."] = "PIN protection is enabled for this Windows account.",
+        ["PIN-защита выключена."] = "PIN protection is off.",
+        ["PIN-код блокирует доступ к окну GeoCoin-Start, но не заменяет пароль кошелька и не шифрует файл кошелька."] = "The PIN locks the GeoCoin-Start window, but does not replace the wallet password or encrypt the wallet file.",
+        ["PIN-код блокирует доступ к окну GeoCoin-Start, но не заменяет пароль кошелька и не шифрует файл кошелька. Настроить PIN и уведомления можно в разделе «Настройки»."] = "The PIN locks the GeoCoin-Start window, but does not replace the wallet password or encrypt the wallet file. Configure the PIN and notifications in Settings.",
+        ["Настройки безопасности сохранены. PIN блокирует окно GeoCoin-Start и не заменяет пароль кошелька."] = "Security settings saved. The PIN locks the GeoCoin-Start window and does not replace the wallet password.",
+        ["Настройки уведомлений сохранены."] = "Notification settings saved.", ["Настройки сохранены"] = "Settings saved",
+        ["Автоматически блокировать"] = "Lock automatically", ["минут бездействия"] = "minutes of inactivity",
+        ["Windows заблокировала системные уведомления приложения. Проверьте настройки уведомлений Windows."] = "Windows blocked notifications for this app. Check Windows notification settings.",
+        ["Проверка уведомлений"] = "Notification check",
+        ["Текущий PIN-код указан неверно."] = "The current PIN is incorrect.", ["Проверьте PIN-код"] = "Check the PIN",
+        ["Неверная длина PIN"] = "Incorrect PIN length", ["Новый PIN должен содержать ровно "] = "The new PIN must contain exactly ",
+        [" цифры."] = " digits.", ["PIN-коды не совпадают."] = "The PIN codes do not match.", ["Проверьте ввод"] = "Check your entry",
+        ["Не удалось сохранить PIN-код: "] = "Could not save PIN: ", ["Ошибка защиты"] = "Security error",
+        ["Чтобы отключить защиту, введите текущий PIN-код."] = "Enter the current PIN to disable protection.",
+        ["Ошибка блокировки"] = "Lock error", ["PIN-код не подходит. Попробуйте ещё раз."] = "That PIN is not correct. Try again.",
+        ["Слишком много попыток. Подождите 30 секунд."] = "Too many attempts. Wait 30 seconds.",
+        ["сек. перед новой попыткой."] = " seconds before trying again.", ["Слишком много попыток. Подождите "] = "Too many attempts. Wait ",
+        ["Открыть GeoCoin-Start"] = "Open GeoCoin-Start", ["Выйти из GeoCoin-Start"] = "Exit GeoCoin-Start",
+        ["Новая награда GeoCoin"] = "New GeoCoin reward",
+        ["Нода остановлена"] = "Node stopped", ["Потеряно соединение с нодой"] = "Lost connection to the node",
+        ["RPC не отвечает. Проверьте состояние ноды и журнал."] = "RPC is not responding. Check node status and the log.",
+        ["Процесс GeoCoin завершился. Откройте вкладку «Нода», чтобы посмотреть журнал."] = "The GeoCoin process exited. Open the Node page to view the log.",
+        ["История кошелька показывает новый добытый блок."] = "Wallet history shows a newly mined block.",
+        ["Нода догнала текущую высоту сети."] = "The node has caught up with the network.",
+        ["Нода запущена, RPC не отвечает"] = "Node is running, but RPC is not responding",
+        ["Пошаговый помощник проведёт через подключение, кошелёк и первый запуск. Вы можете перейти к любому разделу в меню."] = "This step-by-step guide helps you connect the node, set up a wallet, and get started. You can open any section from the menu.",
+        ["Нода подключает GeoCoin-Start к сети и синхронизирует блоки. Нажмите «Запустить ноду» и дождитесь соединения."] = "The node connects GeoCoin-Start to the network and syncs blocks. Select Start node and wait for the connection.",
+        ["Создайте новый кошелёк или импортируйте существующий файл .dat. Пароль кошелька потребуется при подключении."] = "Create a wallet or import an existing .dat file. You will need the wallet password when connecting.",
+        ["Экспортируйте файл кошелька .dat и храните его отдельно. Резервная копия поможет восстановить доступ при поломке компьютера."] = "Export the wallet .dat file and store it separately. A backup can restore access if your computer fails.",
+        ["Теперь можно открыть майнинг, создать адрес для получения или перейти к обзору. Майнинг необязателен."] = "You can now open Mining, create a receive address, or return to Overview. Mining is optional.",
+        ["Шаги"] = "Steps", ["Первый перевод или майнинг"] = "First transfer or mining",
+        ["Баланс: "] = "Balance: ", ["Добыто блоков: "] = "Blocks mined: ", [" · сегодня: "] = " · today: ",
+        [" · сессия: "] = " · session: ", ["Хешрейт: "] = "Hashrate: ", ["CPU: "] = "CPU: ",
+        ["GPU: "] = "GPU: ", ["Состояние ноды: "] = "Node status: ", ["Пиров: "] = "Peers: ",
         ["Нода и журнал"] = "Node and log", ["Отправить монеты"] = "Send coins", ["Получить монеты"] = "Receive coins",
         ["История транзакций"] = "Transaction history", ["Управление кошельком"] = "Wallet management",
         ["Управление GeoCoin без лишних настроек"] = "Manage GeoCoin without unnecessary settings",
@@ -134,6 +357,16 @@ internal sealed class MainForm : Form
         ["Сначала создайте или импортируйте кошелёк на странице «Обзор»."] = "Create or import a wallet on the Overview page first.",
         ["Один процесс GeoCoin выполняет работу ноды. RPC — интерфейс управления этой же нодой; отдельно запускать вторую RPC-ноду не нужно."] = "One GeoCoin process runs the node. RPC controls that same node; a second RPC node is not needed.",
         ["СОСТОЯНИЕ УЗЛА"] = "NODE STATUS", ["ДОСТУП ДЛЯ GPU-ПОДМАЙНЕРА"] = "GPU SUBMINER ACCESS", ["Адрес прослушивания"] = "Listen address",
+        ["Пиры сети"] = "Network peers", ["Активные: "] = "Active: ", ["Отказ порта*: "] = "Port refused*: ", ["Другие сбои: "] = "Other errors: ",
+        ["Показать список"] = "Show list", ["Скрыть список"] = "Hide list", ["Запустите ноду, чтобы увидеть состояние пиров."] = "Start the node to see peer status.",
+        ["Как открыть P2P-порт"] = "How to open the P2P port",
+        ["Читаю состояние пиров…"] = "Loading peer status…", ["Отказ соединения часто указывает на закрытый порт или блокировку брандмауэром. Таймаут сам по себе не подтверждает, что порт закрыт."] = "A connection refusal often indicates a closed port or firewall rejection. A timeout alone does not confirm that the port is closed.",
+        ["Подробная диагностика недоступна. Показаны только активные подключения."] = "Detailed diagnostics are unavailable. Only active connections are shown.",
+        ["Не удалось получить список пиров. Проверьте журнал ноды."] = "Could not retrieve the peer list. Check the node log.",
+        ["Нет активных пиров и недавних попыток подключения."] = "No active peers or recent connection attempts.",
+        ["Подключено"] = "Connected", ["Входящее"] = "Inbound", ["Исходящее"] = "Outbound", ["Зашифровано"] = "Encrypted", ["Без шифрования"] = "Unencrypted",
+        ["Ping: "] = "Ping: ", ["Подключается"] = "Connecting", ["Порт отклоняет соединение"] = "Connection refused", ["Другая ошибка соединения"] = "Other connection error",
+        ["попыток: "] = "attempts: ", ["Ошибка: "] = "Error: ", ["Состояние: "] = "State: ",
         ["127.0.0.1 · только этот компьютер"] = "127.0.0.1 · this computer only",
         ["Для подключения с другого ПК выберите частный IP этого компьютера. Используйте только доверенную сеть или VPN; не настраивайте проброс порта из интернета."] = "To connect another PC, choose this computer's private IP. Use a trusted LAN or VPN; do not expose this port to the internet.",
         ["Имя пользователя майнера"] = "Miner username", ["Пароль майнера"] = "Miner password",
@@ -141,6 +374,9 @@ internal sealed class MainForm : Form
         ["Пароль не сохраняется после закрытия приложения. Для другого ПК выберите частный IP и запустите ноду."] = "The password is not saved after the app closes. Choose a private IP and start the node to connect another PC.",
         ["Пароль действует, пока приложение открыто. Если появится запрос брандмауэра, разрешите только частные сети."] = "The password is kept only while the app is open. If Windows Firewall asks, allow private networks only.",
         ["ЖУРНАЛ НОДЫ И МАЙНЕРА"] = "NODE AND MINER LOG", ["Открыть файл журнала"] = "Open log file",
+        ["Копировать отчёт"] = "Copy diagnostics", ["Пауза отображения журнала"] = "Pause log display",
+        ["Диагностическая сводка скопирована. Она содержит только технический статус, без адресов кошелька и паролей."] = "Diagnostic summary copied. It contains technical status only; wallet addresses and passwords are excluded.",
+        ["Не удалось скопировать сводку в буфер обмена."] = "Could not copy the summary to the clipboard.", ["Диагностика"] = "Diagnostics",
         ["Этот компьютер будет работать как GPU-подмайнер и подключится к уже запущенной ноде на другом ПК. Локальную ноду запускать не нужно."] = "This computer will act as a GPU subminer connected to a node on another PC. No local node is needed.",
         ["ПОДКЛЮЧЕНИЕ К НОДЕ"] = "CONNECT TO NODE", ["Адрес RPC-ноды"] = "Node RPC address", ["Пароль роли майнера"] = "Miner role password",
         ["Адрес для награды"] = "Reward address", ["Видеокарта"] = "GPU", ["Подключаюсь…"] = "Connecting…", ["Подключить и начать GPU-майнинг"] = "Connect and start GPU mining",
@@ -177,7 +413,11 @@ internal sealed class MainForm : Form
         ["История входящих переводов, отправок и наград за майнинг."] = "History of received and sent transfers and mining rewards.", ["Обновить"] = "Refresh",
         ["Дата"] = "Date", ["Операция"] = "Operation", ["Сумма"] = "Amount", ["Комиссия"] = "Fee", ["Состояние"] = "Status", ["Адрес"] = "Address",
         ["Получение"] = "Received", ["Отправка"] = "Sent", ["Награда"] = "Reward", ["Отменена"] = "Reversed", ["Ожидает зрелости"] = "Immature", ["Ожидает"] = "Pending",
-        ["Выберите запись, чтобы посмотреть номер транзакции."] = "Select a record to view its transaction ID.", ["Копировать ID"] = "Copy ID", ["Обновляю историю кошелька…"] = "Updating wallet history…",
+        ["Выберите запись, чтобы посмотреть номер транзакции."] = "Select a record to view its transaction ID.", ["Копировать ID"] = "Copy ID",
+        ["Открыть в блокчейн-обозревателе ↗"] = "Open in block explorer ↗",
+        ["Не удалось открыть обозреватель. Проверьте подключение к интернету."] = "Could not open the block explorer. Check your internet connection.",
+        ["Не удалось открыть обозреватель"] = "Could not open the block explorer",
+        ["Обновляю историю кошелька…"] = "Updating wallet history…",
         ["Создайте или импортируйте кошелёк, чтобы увидеть историю."] = "Create or import a wallet to view its history.", ["Не удалось загрузить историю: "] = "Could not load history: ",
         ["Резервная копия сохраняет весь кошелёк. Приватный ключ относится только к одному адресу."] = "A backup saves the full wallet. A private key applies to one address only.",
         ["Полная копия кошелька"] = "Full wallet backup", ["Файл .dat включает весь текущий кошелёк и подходит для его восстановления."] = "The .dat file contains the whole wallet and can restore it.",
@@ -219,10 +459,33 @@ internal sealed class MainForm : Form
     private readonly Panel _pagePanel = new();
     private readonly Panel _headerPanel = new();
     private readonly Label _pageTitle = new();
+    private readonly Label _pageSubtitle = new();
     private readonly Label _statusLabel = new();
     private readonly ComboBox _languageCombo = new();
     private readonly Button _themeButton = new();
     private readonly Button _checkUpdatesButton = new();
+    private readonly Button _securityButton = new();
+    private readonly Panel _lockOverlay = new();
+    private readonly Label _lockBalance = new();
+    private readonly Label _lockBlocks = new();
+    private readonly Label _lockHashrate = new();
+    private readonly Label _lockNodeStatus = new();
+    private readonly Label _lockMessage = new();
+    private readonly TextBox _lockPinInput = new();
+    private readonly Button _lockUnlockButton = new();
+    private readonly Button _lockHelloButton = new();
+    private readonly System.Windows.Forms.Timer _idleLockTimer = new() { Interval = 15_000 };
+    private UserActivityMessageFilter? _activityMessageFilter;
+    private NotifyIcon? _systemNotificationIcon;
+    private ContextMenuStrip? _notificationMenu;
+    private ToolStripItem? _trayOpenMenuItem;
+    private ToolStripItem? _trayExitMenuItem;
+    private DateTimeOffset _lastUiActivityUtc = DateTimeOffset.UtcNow;
+    private bool _applicationLocked;
+    private bool _notificationBaselineReady;
+    private bool _networkFailureNotified;
+    private int _pinFailedAttempts;
+    private DateTimeOffset? _pinLockoutUntil;
     private readonly Label _balanceValue = new();
     private readonly Label _walletAddress = new();
     private readonly Label _nodeState = new();
@@ -240,6 +503,21 @@ internal sealed class MainForm : Form
     private readonly Label _nodeRpcStatus = new();
     private readonly Label _nodeRuntimeStatus = new();
     private readonly Label _nodePeerStatus = new();
+    private readonly Label _nodePeerSummary = new();
+    private readonly Label _nodePeerHint = new();
+    private readonly TextBox _nodePeerDetails = new();
+    private readonly Button _nodePeerToggleButton = new();
+    private readonly LinkLabel _nodeP2pHelpLink = new();
+    private readonly ToolTip _nodePeerToolTip = new() { AutoPopDelay = 15000, InitialDelay = 450, ReshowDelay = 100, ShowAlways = true };
+    private Panel? _nodePeerCard;
+    private Panel? _nodeRpcCard;
+    private Panel? _nodeLogCard;
+    private readonly List<PeerDiagnostic> _nodePeerDiagnostics = new();
+    private DateTime _lastPeerDiagnosticsRefreshUtc = DateTime.MinValue;
+    private bool _peerDiagnosticsLoading;
+    private bool _peerDiagnosticsAvailable;
+    private bool _peerListAvailable;
+    private bool _nodePeersExpanded;
     private readonly Label _nodeProfileHint = new();
     private readonly Label _minedBlocksTodayLabel = new();
     private readonly Label _minedBlocksSessionLabel = new();
@@ -262,12 +540,20 @@ internal sealed class MainForm : Form
     private readonly Button _refreshGpuButton = new();
     private readonly Button _refreshTransactionsButton = new();
     private readonly Button _copyTransactionIdButton = new();
+    private readonly LinkLabel _openTransactionExplorerLink = new();
+    private readonly Button _previousTransactionsPageButton = new();
+    private readonly Button _nextTransactionsPageButton = new();
+    private readonly ComboBox _transactionsPageSizeCombo = new();
+    private readonly Label _transactionsPageLabel = new();
+    private readonly Label _transactionsPageSizeLabel = new();
     private readonly Button _walletFileExportButton = new();
     private readonly Button _walletKeyExportButton = new();
     private readonly Button _walletKeyImportButton = new();
     private readonly Button _refreshWalletAddressesButton = new();
     private readonly Button _nodeProfileCopyButton = new();
+    private readonly Button _nodeDiagnosticsCopyButton = new();
     private readonly Button _nodeLogOpenButton = new();
+    private readonly CheckBox _pauseNodeLogUpdates = new();
     private readonly Button _remoteGpuButton = new();
     private readonly Button _remoteGpuFindButton = new();
     private readonly TextBox _sendAddress = new();
@@ -299,7 +585,32 @@ internal sealed class MainForm : Form
     private readonly Button _receiveCopyButton = new();
     private readonly Button _saveReceiveQrButton = new();
     private readonly Button _importPaymentQrButton = new();
-    private readonly Button[] _navigation = new Button[8];
+    private readonly Button[] _navigation = new Button[10];
+    private readonly Label _pinSettingsStatus = new();
+    private readonly ComboBox _pinLengthCombo = new();
+    private readonly TextBox _currentPinInput = new() { UseSystemPasswordChar = true, MaxLength = 6 };
+    private readonly TextBox _newPinInput = new() { UseSystemPasswordChar = true, MaxLength = 6 };
+    private readonly TextBox _confirmPinInput = new() { UseSystemPasswordChar = true, MaxLength = 6 };
+    private readonly CheckBox _autoLockCheck = new();
+    private readonly NumericUpDown _autoLockMinutesInput = new() { Minimum = 1, Maximum = 120, Value = 10, Width = 72 };
+    private readonly Label _autoLockUnitsLabel = new();
+    private readonly CheckBox _windowsHelloCheck = new();
+    private readonly CheckBox _notificationsCheck = new();
+    private readonly CheckBox _notifyNodeStoppedCheck = new();
+    private readonly CheckBox _notifySyncCheck = new();
+    private readonly CheckBox _notifyMiningCheck = new();
+    private readonly CheckBox _notifyIncomingTransfersCheck = new();
+    private readonly CheckBox _notifyOutgoingTransfersCheck = new();
+    private readonly CheckBox _autoStartCheck = new();
+    private readonly Button _saveSecurityButton = new();
+    private readonly Button _saveNotificationsButton = new();
+    private readonly Button _testNotificationButton = new();
+    private readonly Button _disablePinButton = new();
+    private readonly Button _lockNowButton = new();
+    private readonly Button _reopenGuideButton = new();
+    private readonly Button _guideActionButton = new();
+    private readonly Button _guideSecondaryButton = new();
+    private readonly Button _guideDoneButton = new();
     private readonly System.Windows.Forms.Timer _refreshTimer = new() { Interval = 4000 };
     private readonly System.Windows.Forms.Timer _sendFeeRefreshTimer = new() { Interval = 450 };
     private readonly object _minedBlocksLock = new();
@@ -311,6 +622,9 @@ internal sealed class MainForm : Form
     private GeoCoinRpcClient? _rpc;
     private GeoCoinRpcClient? _minerRpc;
     private DataGridView? _transactionGrid;
+    private List<JsonElement> _transactionEntries = new();
+    private int _transactionsPageSize = 15;
+    private int _transactionsPageIndex;
     private Process? _nodeProcess;
     private Process? _gpuMinerProcess;
     private WindowsAsciiPathAlias? _nodePathAlias;
@@ -358,10 +672,27 @@ internal sealed class MainForm : Form
     private string? _selectedTransactionId;
     private bool _refreshing;
     private bool _allowClose;
+    private bool _trayExitRequested;
     private bool _closePromptOpen;
     private bool _darkTheme;
     private string _uiLanguage = "ru";
-    private bool _englishUi => _uiLanguage == "en";
+    private bool _firstRunGuideCompleted;
+    private bool _firstRunBackupConfirmed;
+    private bool _notificationsEnabled = true;
+    private bool _notifyNodeStopped = true;
+    private bool _notifySyncComplete = true;
+    private bool _notifyMiningRewards = true;
+    private bool _notifyIncomingTransfers = true;
+    private bool _notifyOutgoingTransfers = true;
+    private bool _autoStartEnabled;
+    private bool _updatingAutoStartCheck;
+    private bool _incomingTransferBaselineReady;
+    private HashSet<string> _knownIncomingTransferIds = new(StringComparer.OrdinalIgnoreCase);
+    private bool _autoLockEnabled = true;
+    private int _autoLockMinutes = 10;
+    private bool _buildingSettingsPage;
+    private bool _windowsHelloEnabled;
+    private string? _protectedPinVerifier;
     private bool _refreshingSendFee;
     private int _lastPageViewportWidth;
     private int _selectedThreads = Math.Max(1, Environment.ProcessorCount / 2);
@@ -369,6 +700,9 @@ internal sealed class MainForm : Form
     public MainForm()
     {
         LoadUiPreferences();
+        try { _autoStartEnabled = StartupRegistration.IsEnabled(); } catch { }
+        _activityMessageFilter = new UserActivityMessageFilter(() => _lastUiActivityUtc = DateTimeOffset.UtcNow);
+        Application.AddMessageFilter(_activityMessageFilter);
         Text = "GeoCoin-Start — простой кошелёк";
         Icon = Icon.ExtractAssociatedIcon(Environment.ProcessPath ?? "") ?? SystemIcons.Application;
         StartPosition = FormStartPosition.CenterScreen;
@@ -380,10 +714,22 @@ internal sealed class MainForm : Form
         ForeColor = Ink;
         Font = new Font("Segoe UI", 10);
         FormClosing += HandleClosing;
+        Resize += (_, _) =>
+        {
+            if (WindowState == FormWindowState.Minimized && Visible)
+                HideToSystemTray();
+        };
         FormClosed += (_, _) =>
         {
+            _idleLockTimer.Stop();
+            if (_activityMessageFilter is not null) Application.RemoveMessageFilter(_activityMessageFilter);
+            _systemNotificationIcon?.Dispose();
+            _systemNotificationIcon = null;
+            _notificationMenu?.Dispose();
+            _notificationMenu = null;
             _nodePathAlias?.Dispose();
             _nodePathAlias = null;
+            _nodePeerToolTip.Dispose();
             if (_updateInstallerToLaunch is not { } installerPath) return;
             _updateInstallerToLaunch = null;
             try
@@ -398,14 +744,15 @@ internal sealed class MainForm : Form
             catch (Exception ex)
             {
                 try { File.Delete(installerPath); } catch { }
-                MessageBox.Show(TranslateUiText("Не удалось запустить установщик обновления: " + ex.Message),
-                    TranslateUiText("Ошибка обновления"), MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                ShowLocalizedMessage("Не удалось запустить установщик обновления: " + ex.Message,
+                    "Ошибка обновления", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             }
         };
 
         LoadMinedBlockRecords();
         BuildShell();
         ApplyThemeToTree(this);
+        InitializeSystemNotifications();
         _nodeButton.Click += async (_, _) =>
         {
             if (IsNodeRunning()) await StopNodeAsync();
@@ -413,6 +760,7 @@ internal sealed class MainForm : Form
             BuildPage();
         };
         _nodeProfileCopyButton.Click += (_, _) => CopyMinerConnectionProfile();
+        _nodeDiagnosticsCopyButton.Click += (_, _) => CopyNodeDiagnostics();
         _nodeLogOpenButton.Click += (_, _) => OpenNodeLog();
         _toggleMinerPasswordVisibilityButton.Click += (_, _) =>
         {
@@ -435,6 +783,107 @@ internal sealed class MainForm : Form
             await ImportWalletAsync();
             BuildPage();
         };
+        _guideActionButton.Click += async (_, _) =>
+        {
+            int step = GetFirstRunStep();
+            if (_firstRunGuideCompleted)
+            {
+                SetPage("overview");
+                return;
+            }
+            if (step == 4)
+            {
+                _firstRunGuideCompleted = true;
+                SaveUiPreferences();
+                BuildPage();
+                return;
+            }
+            switch (GetFirstRunStep())
+            {
+                case 1: await StartNodeAsync(offerWalletCreation: false); BuildPage(); break;
+                case 2: _walletButton.PerformClick(); break;
+                case 3: SetPage("wallet"); break;
+                default: SetPage("mining"); break;
+            }
+        };
+        _guideSecondaryButton.Click += async (_, _) =>
+        {
+            switch (GetFirstRunStep())
+            {
+                case 1: SetPage("node"); break;
+                case 2: _walletRestoreButton.PerformClick(); break;
+                case 3:
+                    await BackupWalletAsync();
+                    break;
+                default: SetPage("receive"); break;
+            }
+        };
+        _guideDoneButton.Click += (_, _) =>
+        {
+            if (GetFirstRunStep() == 3)
+            {
+                _firstRunBackupConfirmed = true;
+                SaveUiPreferences();
+                BuildPage();
+                return;
+            }
+            // Skipping only closes this page. Completion is saved only after the user finishes step 4.
+            SetPage("overview");
+        };
+        _reopenGuideButton.Click += (_, _) =>
+        {
+            SetPage("guide");
+        };
+        _saveSecurityButton.Click += (_, _) => SaveSecuritySettingsFromUi();
+        _saveNotificationsButton.Click += (_, _) => SaveNotificationSettings();
+        _autoStartCheck.CheckedChanged += (_, _) => SaveAutoStartPreference();
+        _autoLockCheck.CheckedChanged += (_, _) =>
+        {
+            _autoLockMinutesInput.Enabled = _autoLockCheck.Checked;
+            _autoLockUnitsLabel.Enabled = _autoLockCheck.Checked;
+            if (_buildingSettingsPage) return;
+            _autoLockEnabled = _autoLockCheck.Checked;
+            SaveUiPreferences();
+        };
+        _autoLockMinutesInput.ValueChanged += (_, _) =>
+        {
+            if (_buildingSettingsPage) return;
+            _autoLockMinutes = (int)_autoLockMinutesInput.Value;
+            SaveUiPreferences();
+        };
+        _windowsHelloCheck.CheckedChanged += (_, _) =>
+        {
+            if (_buildingSettingsPage || !IsPinLockConfigured()) return;
+            _windowsHelloEnabled = _windowsHelloCheck.Checked;
+            SaveUiPreferences();
+        };
+        _testNotificationButton.Click += (_, _) =>
+        {
+            if (!_notificationsEnabled)
+            {
+                ShowLocalizedMessage("Включите и сохраните системные уведомления, чтобы отправить тест.",
+                    "Уведомления выключены", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            if (!ShowSystemNotification("Тестовое уведомление GeoCoin-Start", "Системные уведомления приложения включены."))
+                ShowLocalizedMessage("Windows заблокировала системные уведомления приложения. Проверьте настройки уведомлений Windows.",
+                    "Проверка уведомлений", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        };
+        _disablePinButton.Click += (_, _) => DisablePinFromSettings();
+        _lockNowButton.Click += (_, _) => LockApplication();
+        _lockHelloButton.Click += async (_, _) => await UnlockWithWindowsHelloAsync();
+        _notificationsCheck.CheckedChanged += (_, _) =>
+        {
+            bool enabled = _notificationsCheck.Checked;
+            _notifyNodeStoppedCheck.Enabled = enabled;
+            _notifySyncCheck.Enabled = enabled;
+            _notifyMiningCheck.Enabled = enabled;
+        };
+        foreach (TextBox pinInput in new[] { _currentPinInput, _newPinInput, _confirmPinInput })
+            pinInput.KeyPress += (_, e) =>
+            {
+                if (!char.IsControl(e.KeyChar) && !char.IsDigit(e.KeyChar)) e.Handled = true;
+            };
         _mineButton.Click += async (_, _) => await ToggleCpuMiningAsync();
         _gpuMineButton.Click += async (_, _) => await ToggleGpuMiningAsync();
         _refreshGpuButton.Click += async (_, _) => await RefreshGpuDevicesAsync();
@@ -475,6 +924,25 @@ internal sealed class MainForm : Form
             await RefreshSendFeeEstimateAsync();
         };
         _refreshTransactionsButton.Click += async (_, _) => await RefreshTransactionsAsync();
+        _previousTransactionsPageButton.Click += (_, _) =>
+        {
+            if (_transactionsPageIndex == 0) return;
+            _transactionsPageIndex--;
+            RenderTransactionsPage();
+        };
+        _nextTransactionsPageButton.Click += (_, _) =>
+        {
+            if (_transactionsPageIndex + 1 >= GetTransactionPageCount()) return;
+            _transactionsPageIndex++;
+            RenderTransactionsPage();
+        };
+        _transactionsPageSizeCombo.SelectedIndexChanged += (_, _) =>
+        {
+            if (_transactionsPageSizeCombo.SelectedItem is not int pageSize) return;
+            _transactionsPageSize = pageSize;
+            _transactionsPageIndex = 0;
+            RenderTransactionsPage();
+        };
         _copyTransactionIdButton.Click += (_, _) => CopySelectedTransactionId();
         _walletFileExportButton.Click += async (_, _) => await BackupWalletAsync();
         _walletKeyExportButton.Click += async (_, _) => await ExportPrivateKeyAsync();
@@ -489,7 +957,19 @@ internal sealed class MainForm : Form
             ApplyUiLanguage(this);
         };
         _refreshTimer.Start();
-        Shown += (_, _) => FitWindowToScreen();
+        _idleLockTimer.Tick += (_, _) =>
+        {
+            if (_autoLockEnabled && IsPinLockConfigured() && !_applicationLocked &&
+                DateTimeOffset.UtcNow - _lastUiActivityUtc >= TimeSpan.FromMinutes(_autoLockMinutes))
+                LockApplication();
+            if (_applicationLocked) UpdateLockScreenMetrics();
+        };
+        _idleLockTimer.Start();
+        Shown += (_, _) =>
+        {
+            FitWindowToScreen();
+            if (IsPinLockConfigured()) BeginInvoke((Action)LockApplication);
+        };
         DpiChanged += (_, _) =>
         {
             if (Controls.Count > 0 && Controls[0] is TableLayoutPanel shell)
@@ -500,7 +980,7 @@ internal sealed class MainForm : Form
             LayoutHeaderStatus();
             BuildPage();
         };
-        SetPage("overview");
+        SetPage(_firstRunGuideCompleted ? "overview" : "guide");
         UpdateStatus();
     }
 
@@ -525,6 +1005,24 @@ internal sealed class MainForm : Form
         shell.Controls.Add(rail, 0, 0);
         shell.SetRowSpan(rail, 2);
 
+        var railLayout = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            Margin = Padding.Empty,
+            Padding = Padding.Empty,
+            ColumnCount = 1,
+            RowCount = 3,
+            BackColor = Rail
+        };
+        railLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        railLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, ScaleUi(112)));
+        railLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        railLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, ScaleUi(62)));
+        rail.Controls.Add(railLayout);
+
+        var brandPanel = new Panel { Dock = DockStyle.Fill, Margin = Padding.Empty, BackColor = Rail };
+        railLayout.Controls.Add(brandPanel, 0, 0);
+
         var brandIcon = new PictureBox
         {
             Location = UiPoint(20, 23),
@@ -532,8 +1030,8 @@ internal sealed class MainForm : Form
             SizeMode = PictureBoxSizeMode.Zoom,
             Image = (Icon ?? SystemIcons.Application).ToBitmap()
         };
-        rail.Controls.Add(brandIcon);
-        rail.Controls.Add(new Label
+        brandPanel.Controls.Add(brandIcon);
+        brandPanel.Controls.Add(new Label
         {
             Text = "GeoCoin",
             Location = UiPoint(64, 22),
@@ -541,7 +1039,7 @@ internal sealed class MainForm : Form
             Font = new Font("Segoe UI Semibold", 22, FontStyle.Bold),
             ForeColor = Color.FromArgb(233, 208, 153)
         });
-        rail.Controls.Add(new Label
+        brandPanel.Controls.Add(new Label
         {
             Text = "ПРОСТОЙ КОШЕЛЁК",
             Location = UiPoint(27, 70),
@@ -550,8 +1048,19 @@ internal sealed class MainForm : Form
             ForeColor = Color.FromArgb(144, 161, 145)
         });
 
-        string[] names = { "Обзор", "Майнинг", "Подмайнер", "Нода", "Отправить", "Получить", "История", "Кошелёк" };
-        string[] pages = { "overview", "mining", "subminer", "node", "send", "receive", "transactions", "wallet" };
+        var navigationList = new Panel
+        {
+            Name = "navigationList",
+            Dock = DockStyle.Fill,
+            Margin = Padding.Empty,
+            Padding = Padding.Empty,
+            AutoScroll = true,
+            BackColor = Rail
+        };
+        railLayout.Controls.Add(navigationList, 0, 1);
+
+        string[] names = { "Обзор", "Майнинг", "Подмайнер", "Нода", "Отправить", "Получить", "История", "Кошелёк", "Помощник", "Настройки" };
+        string[] pages = { "overview", "mining", "subminer", "node", "send", "receive", "transactions", "wallet", "guide", "settings" };
         for (int i = 0; i < names.Length; i++)
         {
             int index = i;
@@ -560,8 +1069,9 @@ internal sealed class MainForm : Form
                 Text = names[i],
                 Tag = pages[i],
                 TextAlign = ContentAlignment.MiddleLeft,
-                Location = UiPoint(18, 132 + i * 56),
-                Size = UiSize(188, 44),
+                Location = UiPoint(18, 8 + i * 44),
+                Size = UiSize(188, 38),
+                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
                 FlatStyle = FlatStyle.Flat,
                 BackColor = Rail,
                 ForeColor = Color.FromArgb(206, 215, 205),
@@ -572,18 +1082,17 @@ internal sealed class MainForm : Form
             button.FlatAppearance.BorderSize = 0;
             button.FlatAppearance.MouseOverBackColor = Color.FromArgb(36, 50, 41);
             button.Click += (_, _) => SetPage(pages[index]);
-            rail.Controls.Add(button);
+            navigationList.Controls.Add(button);
             _navigation[i] = button;
         }
 
         var railFooter = new Panel
         {
             Name = "railFooter",
-            Dock = DockStyle.Bottom,
-            Height = ScaleUi(62),
+            Dock = DockStyle.Fill,
             BackColor = Rail
         };
-        rail.Controls.Add(railFooter);
+        railLayout.Controls.Add(railFooter, 0, 2);
 
         var originalLink = new LinkLabel
         {
@@ -620,14 +1129,13 @@ internal sealed class MainForm : Form
         _pageTitle.AutoSize = true;
         _pageTitle.Font = new Font("Segoe UI Semibold", 21, FontStyle.Bold);
         _pageTitle.ForeColor = Ink;
-        _headerPanel.Controls.Add(new Label
-        {
-            Text = "Управление GeoCoin без лишних настроек",
-            Location = UiPoint(37, 61),
-            AutoSize = true,
-            ForeColor = Muted,
-            Font = new Font("Segoe UI", 9.5f)
-        });
+        _pageSubtitle.Text = "Управление GeoCoin без лишних настроек";
+        _pageSubtitle.Location = UiPoint(37, 61);
+        _pageSubtitle.AutoSize = false;
+        _pageSubtitle.AutoEllipsis = true;
+        _pageSubtitle.ForeColor = Muted;
+        _pageSubtitle.Font = new Font("Segoe UI", 9.5f);
+        _headerPanel.Controls.Add(_pageSubtitle);
 
         _languageCombo.DropDownStyle = ComboBoxStyle.DropDownList;
         _languageCombo.Items.AddRange(UiLocalization.LanguageNames.Cast<object>().ToArray());
@@ -653,10 +1161,16 @@ internal sealed class MainForm : Form
         _checkUpdatesButton.Click += async (_, _) => await CheckForUpdatesAsync();
         _headerPanel.Controls.Add(_checkUpdatesButton);
 
+        StyleSecondaryButton(_securityButton, new Point(0, 8), new Size(92, 28));
+        _securityButton.Text = "Настройки";
+        _securityButton.Click += (_, _) => SetPage("settings");
+        _headerPanel.Controls.Add(_securityButton);
+
         StyleSecondaryButton(_themeButton, new Point(0, 8), new Size(112, 28));
         _themeButton.Click += (_, _) =>
         {
             _darkTheme = !_darkTheme;
+            Program.ApplyColorMode(_darkTheme);
             SaveUiPreferences();
             BuildPage();
             UpdatePreferenceControlText();
@@ -666,6 +1180,11 @@ internal sealed class MainForm : Form
         };
         _headerPanel.Controls.Add(_themeButton);
         UpdatePreferenceControlText();
+
+        StyleSecondaryButton(_lockNowButton, new Point(0, 8), new Size(124, 28));
+        _lockNowButton.Text = "Заблокировать";
+        _lockNowButton.Visible = IsPinLockConfigured();
+        _headerPanel.Controls.Add(_lockNowButton);
 
         _statusLabel.Size = UiSize(292, 34);
         _statusLabel.TextAlign = ContentAlignment.MiddleCenter;
@@ -682,7 +1201,85 @@ internal sealed class MainForm : Form
         _pagePanel.Padding = UiPadding(34, 8, 34, 28);
         shell.Controls.Add(_pagePanel, 1, 1);
         _pagePanel.ClientSizeChanged += (_, _) => RefreshPageLayoutForWidth();
+        BuildLockOverlay();
         LayoutHeaderStatus();
+    }
+
+    private void BuildLockOverlay()
+    {
+        _lockOverlay.Dock = DockStyle.Fill;
+        _lockOverlay.Visible = false;
+        _lockOverlay.BackColor = Canvas;
+        Controls.Add(_lockOverlay);
+
+        var card = new Panel
+        {
+            Size = UiSize(560, 430),
+            BackColor = Surface,
+            BorderStyle = BorderStyle.FixedSingle
+        };
+        _lockOverlay.Controls.Add(card);
+        void CenterCard()
+        {
+            card.Location = new Point(Math.Max(ScaleUi(18), (_lockOverlay.ClientSize.Width - card.Width) / 2),
+                Math.Max(ScaleUi(18), (_lockOverlay.ClientSize.Height - card.Height) / 2));
+        }
+        _lockOverlay.Resize += (_, _) => CenterCard();
+        CenterCard();
+
+        var title = new Label
+        {
+            Text = "GeoCoin-Start заблокирован",
+            Location = UiPoint(28, 24),
+            Size = UiSize(500, 38),
+            Font = new Font("Segoe UI Semibold", 20, FontStyle.Bold),
+            ForeColor = Ink
+        };
+        card.Controls.Add(title);
+        AddLabel(card, "Текущая информация", 28, 82, 480, 22, Muted, 9, bold: true);
+        _lockBalance.Location = UiPoint(28, 114);
+        _lockBalance.Size = UiSize(480, 28);
+        _lockBalance.ForeColor = Ink;
+        card.Controls.Add(_lockBalance);
+        _lockBlocks.Location = UiPoint(28, 148);
+        _lockBlocks.Size = UiSize(480, 28);
+        _lockBlocks.ForeColor = Ink;
+        card.Controls.Add(_lockBlocks);
+        _lockHashrate.Location = UiPoint(28, 182);
+        _lockHashrate.Size = UiSize(480, 28);
+        _lockHashrate.ForeColor = Ink;
+        card.Controls.Add(_lockHashrate);
+        _lockNodeStatus.Location = UiPoint(28, 216);
+        _lockNodeStatus.Size = UiSize(480, 46);
+        _lockNodeStatus.ForeColor = Muted;
+        card.Controls.Add(_lockNodeStatus);
+        AddLabel(card, "Введите PIN-код приложения", 28, 286, 480, 22, Ink, 10, bold: true);
+        StyleTextBox(_lockPinInput, new Point(28, 314), new Size(150, 38));
+        _lockPinInput.MaxLength = 6;
+        _lockPinInput.UseSystemPasswordChar = true;
+        _lockPinInput.KeyPress += (_, e) =>
+        {
+            if (!char.IsControl(e.KeyChar) && !char.IsDigit(e.KeyChar)) e.Handled = true;
+        };
+        _lockPinInput.KeyDown += (_, e) =>
+        {
+            if (e.KeyCode != Keys.Enter) return;
+            e.SuppressKeyPress = true;
+            UnlockApplication();
+        };
+        card.Controls.Add(_lockPinInput);
+        _lockHelloButton.Text = "Windows Hello";
+        StyleSecondaryButton(_lockHelloButton, new Point(190, 312), new Size(156, 42));
+        _lockHelloButton.Visible = _windowsHelloEnabled;
+        card.Controls.Add(_lockHelloButton);
+        _lockUnlockButton.Text = "Разблокировать";
+        StylePrimaryButton(_lockUnlockButton, new Point(360, 312), new Size(170, 42));
+        _lockUnlockButton.Click += (_, _) => UnlockApplication();
+        card.Controls.Add(_lockUnlockButton);
+        _lockMessage.Location = UiPoint(28, 366);
+        _lockMessage.Size = UiSize(480, 38);
+        _lockMessage.ForeColor = Muted;
+        card.Controls.Add(_lockMessage);
     }
 
     private void LayoutHeaderStatus()
@@ -691,13 +1288,71 @@ internal sealed class MainForm : Form
         int margin = ScaleUi(34);
         int width = _statusLabel.Width > 0 ? _statusLabel.Width : ScaleUi(292);
         int themeWidth = ScaleUi(112);
+        int securityWidth = ScaleUi(92);
         int updateWidth = ScaleUi(148);
+        int lockWidth = ScaleUi(124);
         int controlGap = ScaleUi(8);
         int right = _headerPanel.ClientSize.Width - margin;
+        int allControlsWidth = _languageCombo.Width + updateWidth + securityWidth + themeWidth +
+                               (_lockNowButton.Visible ? lockWidth : 0);
+        int allGapsWidth = controlGap * (_lockNowButton.Visible ? 4 : 3);
+        bool compactToolbar = margin * 2 + allControlsWidth + allGapsWidth > _headerPanel.ClientSize.Width;
+
         _themeButton.Location = new Point(Math.Max(margin, right - themeWidth), ScaleUi(8));
-        _checkUpdatesButton.Location = new Point(Math.Max(margin, right - themeWidth - controlGap - updateWidth), ScaleUi(8));
-        _languageCombo.Location = new Point(Math.Max(margin, right - themeWidth - controlGap - updateWidth - controlGap - ScaleUi(112)), ScaleUi(8));
+        int topRowY = ScaleUi(8);
+        int lockTopRowWidth = _lockNowButton.Visible && !compactToolbar ? lockWidth + controlGap : 0;
+        int lockLeft = compactToolbar
+            ? right - width - controlGap - lockWidth
+            : right - themeWidth - controlGap - lockWidth;
+        _lockNowButton.Location = new Point(Math.Max(margin, lockLeft), compactToolbar ? ScaleUi(43) : topRowY);
+        _securityButton.Location = new Point(Math.Max(margin, right - themeWidth - controlGap - lockTopRowWidth - securityWidth), topRowY);
+        _checkUpdatesButton.Location = new Point(Math.Max(margin, right - themeWidth - controlGap - lockTopRowWidth - securityWidth - controlGap - updateWidth), topRowY);
+        _languageCombo.Location = new Point(Math.Max(margin,
+            right - themeWidth - controlGap - lockTopRowWidth - securityWidth - controlGap - updateWidth - controlGap - _languageCombo.Width), topRowY);
         _statusLabel.Location = new Point(Math.Max(margin, right - width), ScaleUi(43));
+
+        int titleX = ScaleUi(34);
+        int titleGap = ScaleUi(12);
+        int titleWidthInTopRow = _languageCombo.Left - titleX - titleGap;
+        bool compact = compactToolbar || MeasurePageTitle(21f) > titleWidthInTopRow;
+        _pageSubtitle.Visible = !compact;
+
+        _pageTitle.AutoEllipsis = compact;
+        _pageTitle.TextAlign = ContentAlignment.MiddleLeft;
+        if (!compact)
+        {
+            _pageTitle.AutoSize = true;
+            _pageTitle.Location = UiPoint(34, 20);
+            _pageSubtitle.Location = UiPoint(37, 61);
+            _pageSubtitle.Size = new Size(Math.Max(ScaleUi(40), _statusLabel.Left - ScaleUi(49)), ScaleUi(24));
+            SetPageTitleFont(21f);
+            return;
+        }
+
+        int titleRightLimit = compactToolbar && _lockNowButton.Visible ? _lockNowButton.Left - titleGap : _statusLabel.Left;
+        int titleWidth = Math.Max(ScaleUi(40), titleRightLimit - titleX - titleGap);
+        float titleFontSize = 21f;
+        while (titleFontSize > 15f && MeasurePageTitle(titleFontSize) > titleWidth)
+            titleFontSize -= 0.5f;
+
+        _pageTitle.AutoSize = false;
+        _pageTitle.Location = new Point(titleX, ScaleUi(43));
+        _pageTitle.Size = new Size(titleWidth, ScaleUi(34));
+        SetPageTitleFont(titleFontSize);
+    }
+
+    private int MeasurePageTitle(float fontSize)
+    {
+        using var font = new Font("Segoe UI Semibold", fontSize, FontStyle.Bold);
+        return TextRenderer.MeasureText(_pageTitle.Text, font, Size.Empty, TextFormatFlags.NoPadding).Width;
+    }
+
+    private void SetPageTitleFont(float fontSize)
+    {
+        if (Math.Abs(_pageTitle.Font.SizeInPoints - fontSize) < 0.1f) return;
+        Font previous = _pageTitle.Font;
+        _pageTitle.Font = new Font("Segoe UI Semibold", fontSize, FontStyle.Bold);
+        previous.Dispose();
     }
 
     private void RefreshPageLayoutForWidth()
@@ -746,6 +1401,8 @@ internal sealed class MainForm : Form
 
     private void SetPage(string page)
     {
+        if (!string.Equals(_currentPage, page, StringComparison.Ordinal))
+            _pagePanel.AutoScrollPosition = Point.Empty;
         if (_currentPage == "wallet" && page != "wallet") _privateKeyInput.Clear();
         _currentPage = page;
         string[] titles = page switch
@@ -757,10 +1414,12 @@ internal sealed class MainForm : Form
             "receive" => new[] { "Получить монеты", "Получить монеты", "Получить монеты", "Получить монеты" },
             "transactions" => new[] { "История транзакций", "История транзакций", "История транзакций", "История транзакций" },
             "wallet" => new[] { "Управление кошельком", "Управление кошельком", "Управление кошельком", "Управление кошельком" },
+            "guide" => new[] { "Помощник первого запуска", "Помощник первого запуска", "Помощник первого запуска", "Помощник первого запуска" },
+            "settings" => new[] { "Настройки", "Настройки", "Настройки", "Настройки" },
             _ => new[] { "Обзор", "Обзор", "Обзор", "Обзор" }
         };
         _pageTitle.Text = titles[0];
-        string[] pages = { "overview", "mining", "subminer", "node", "send", "receive", "transactions", "wallet" };
+        string[] pages = { "overview", "mining", "subminer", "node", "send", "receive", "transactions", "wallet", "guide", "settings" };
         for (int i = 0; i < _navigation.Length; i++)
         {
             bool selected = pages[i] == page;
@@ -768,6 +1427,8 @@ internal sealed class MainForm : Form
                 ? (_darkTheme ? Color.FromArgb(48, 61, 52) : Color.FromArgb(44, 59, 48))
                 : Rail;
             _navigation[i].ForeColor = selected ? Color.FromArgb(241, 218, 173) : Color.FromArgb(206, 215, 205);
+            if (selected && _navigation[i].Parent is ScrollableControl navigationScroll)
+                navigationScroll.ScrollControlIntoView(_navigation[i]);
         }
         BuildPage();
         if (page == "transactions" && IsNodeRunning() && File.Exists(AppPaths.WalletPath))
@@ -798,6 +1459,8 @@ internal sealed class MainForm : Form
             case "receive": BuildReceivePage(); break;
             case "transactions": BuildTransactionsPage(); break;
             case "wallet": BuildWalletPage(); break;
+            case "guide": BuildFirstRunGuidePage(); break;
+            case "settings": BuildSettingsPage(); break;
             default: BuildOverviewPage(); break;
         }
         _pagePanel.ResumeLayout();
@@ -806,6 +1469,602 @@ internal sealed class MainForm : Form
         ApplyThemeToTree(this);
         ApplyUiLanguage(this);
         UpdateStatus();
+    }
+
+    private int GetFirstRunStep()
+    {
+        if (!IsNodeRunning()) return 1;
+        if (!File.Exists(AppPaths.WalletPath)) return 2;
+        return _firstRunBackupConfirmed ? 4 : 3;
+    }
+
+    private void BuildFirstRunGuidePage()
+    {
+        int cardWidth = PageCardWidth(740);
+        bool completed = _firstRunGuideCompleted;
+        AddParagraph(completed
+                ? "Обучение пройдено. Ваш прогресс сохранён, пользоваться приложением можно через меню."
+                : "Пошаговый помощник проведёт через подключение, кошелёк и первый запуск. Вы можете перейти к любому разделу в меню.",
+            22, 12, cardWidth, 54);
+        Panel card = AddCard(22, 82, cardWidth, 360);
+
+        int step = GetFirstRunStep();
+        string title = completed ? "Обучение пройдено" : step switch
+        {
+            1 => "Шаг 1 из 4 · Подключите ноду",
+            2 => "Шаг 2 из 4 · Создайте или добавьте кошелёк",
+            3 => "Шаг 3 из 4 · Сохраните резервную копию",
+            _ => "Шаг 4 из 4 · Завершите обучение"
+        };
+        string description = completed
+            ? "Обучение завершено. Статус сохранён на этом компьютере; при следующем открытии помощника вы увидите этот результат."
+            : step switch
+        {
+            1 => "Нода подключает GeoCoin-Start к сети и синхронизирует блоки. Нажмите «Запустить ноду» и дождитесь соединения.",
+            2 => "Создайте новый кошелёк или импортируйте существующий файл .dat. Пароль кошелька потребуется при подключении.",
+            3 => "Экспортируйте файл кошелька .dat и храните его отдельно. Резервная копия поможет восстановить доступ при поломке компьютера.",
+            _ => "Основные шаги выполнены. Майнинг и создание адреса остаются на ваше усмотрение. Нажмите кнопку, чтобы сохранить прохождение помощника."
+        };
+        AddLabel(card, title, 26, 24, cardWidth - 80, 34, Ink, 17, bold: true);
+        AddLabel(card, description, 26, 75, cardWidth - 80, 58, Muted, 10.5f);
+
+        string[] steps = { "Нода", "Кошелёк", "Резервная копия", "Первый перевод или майнинг" };
+        int tileGap = 8;
+        int tileWidth = (cardWidth - 52 - tileGap * 3) / steps.Length;
+        for (int index = 0; index < steps.Length; index++)
+        {
+            int progress = completed || index < step - 1 ? 100 : 0;
+            bool currentStep = !completed && index == step - 1;
+            var tile = new GuideProgressTile
+            {
+                Text = steps[index],
+                StepNumber = index + 1,
+                ProgressPercent = progress,
+                IsCurrent = currentStep,
+                Location = UiPoint(26 + index * (tileWidth + tileGap), 156),
+                Size = UiSize(tileWidth, 70),
+                BackColor = Surface,
+                ForeColor = Ink,
+                Font = new Font("Segoe UI Semibold", 8.5f, FontStyle.Bold),
+                BorderColor = currentStep ? Accent : Divider,
+                TrackColor = Divider,
+                ProgressColor = progress >= 100 ? Success : currentStep ? Accent : Divider,
+                AccessibleName = $"{TranslateUiText(steps[index])}, {progress}%"
+            };
+            card.Controls.Add(tile);
+        }
+
+        _guideActionButton.Visible = true;
+        _guideActionButton.Text = completed ? "Открыть обзор" : step switch
+        {
+            1 => "Запустить ноду",
+            2 => "Создать кошелёк",
+            3 => "Открыть резервные копии",
+            _ => "Завершить помощник"
+        };
+        int guideButtonWidth = completed || step == 4 ? Math.Min(300, cardWidth - 76) : Math.Min(252, (cardWidth - 76) / 2);
+        StylePrimaryButton(_guideActionButton, new Point(26, 244), new Size(guideButtonWidth, 44));
+        _guideActionButton.Enabled = completed || step != 1 || !_startingNode;
+        card.Controls.Add(_guideActionButton);
+
+        _guideSecondaryButton.Visible = !completed && step < 4;
+        _guideSecondaryButton.Text = step switch
+        {
+            1 => "Открыть страницу ноды",
+            2 => "Импортировать кошелёк",
+            3 => "Экспортировать копию сейчас",
+            _ => "Открыть получение монет"
+        };
+        if (_guideSecondaryButton.Visible)
+        {
+            StyleSecondaryButton(_guideSecondaryButton, new Point(40 + guideButtonWidth, 244), new Size(guideButtonWidth, 44));
+            card.Controls.Add(_guideSecondaryButton);
+        }
+
+        _guideDoneButton.Visible = !completed && step < 4;
+        _guideDoneButton.Text = step == 3 ? "Я сохранил резервную копию" : "Пока пропустить помощник";
+        if (_guideDoneButton.Visible)
+        {
+            StyleSecondaryButton(_guideDoneButton, new Point(26, 300), new Size(300, 40));
+            card.Controls.Add(_guideDoneButton);
+        }
+
+        if (!completed)
+            AddParagraph("PIN-код блокирует доступ к окну GeoCoin-Start, но не заменяет пароль кошелька и не шифрует файл кошелька. Настроить PIN и уведомления можно в разделе «Настройки».",
+                22, 466, cardWidth, 60);
+    }
+
+    private void BuildSettingsPage()
+    {
+        int cardWidth = PageCardWidth(740);
+        int contentWidth = cardWidth - 52;
+        AddParagraph("Управляйте защитой приложения, системными уведомлениями, автозапуском и первым запуском.", 22, 12, cardWidth, 42);
+
+        Panel securityCard = AddCard(22, 66, cardWidth, 500);
+        AddLabel(securityCard, "БЕЗОПАСНОСТЬ", 24, 18, contentWidth, 22, Muted, 9, bold: true);
+        _pinSettingsStatus.Text = IsPinLockConfigured()
+            ? "PIN-защита включена для текущей учётной записи Windows."
+            : "PIN-защита выключена.";
+        _pinSettingsStatus.Location = UiPoint(24, 47);
+        _pinSettingsStatus.Size = UiSize(contentWidth, 26);
+        _pinSettingsStatus.ForeColor = IsPinLockConfigured() ? Success : Muted;
+        securityCard.Controls.Add(_pinSettingsStatus);
+
+        AddLabel(securityCard, "Длина PIN", 24, 84, 190, 26, Ink, 10, bold: true);
+        _pinLengthCombo.DropDownStyle = ComboBoxStyle.DropDownList;
+        if (_pinLengthCombo.Items.Count == 0) _pinLengthCombo.Items.AddRange(new object[] { "4", "6" });
+        if (_pinLengthCombo.SelectedIndex < 0) _pinLengthCombo.SelectedIndex = 0;
+        _pinLengthCombo.Location = UiPoint(224, 80);
+        _pinLengthCombo.Size = UiSize(88, 32);
+        securityCard.Controls.Add(_pinLengthCombo);
+
+        AddLabel(securityCard, "Текущий PIN", 24, 128, 190, 26, Ink, 10, bold: true);
+        StyleTextBox(_currentPinInput, new Point(224, 124), new Size(180, 32));
+        _currentPinInput.Visible = IsPinLockConfigured();
+        securityCard.Controls.Add(_currentPinInput);
+        AddLabel(securityCard, "Новый PIN", 24, 172, 190, 26, Ink, 10, bold: true);
+        StyleTextBox(_newPinInput, new Point(224, 168), new Size(180, 32));
+        securityCard.Controls.Add(_newPinInput);
+        AddLabel(securityCard, "Повторите новый PIN", 24, 216, 190, 26, Ink, 10, bold: true);
+        StyleTextBox(_confirmPinInput, new Point(224, 212), new Size(180, 32));
+        securityCard.Controls.Add(_confirmPinInput);
+
+        _saveSecurityButton.Text = IsPinLockConfigured() ? "Сохранить PIN и настройки" : "Настроить PIN-защиту";
+        StylePrimaryButton(_saveSecurityButton, new Point(24, 264), new Size(270, 40));
+        securityCard.Controls.Add(_saveSecurityButton);
+        _disablePinButton.Text = "Отключить PIN";
+        StyleSecondaryButton(_disablePinButton, new Point(24, 314), new Size(160, 40));
+        _disablePinButton.Visible = IsPinLockConfigured();
+        securityCard.Controls.Add(_disablePinButton);
+        _buildingSettingsPage = true;
+        _autoLockCheck.Text = "Автоматически блокировать";
+        _autoLockCheck.Checked = _autoLockEnabled;
+        _autoLockCheck.AutoSize = false;
+        _autoLockCheck.Margin = Padding.Empty;
+        _autoLockCheck.Size = UiSize(238, 30);
+        _autoLockCheck.Enabled = true;
+        _autoLockMinutesInput.Value = Math.Clamp(_autoLockMinutes, 1, 120);
+        _autoLockMinutesInput.Enabled = _autoLockEnabled;
+        _autoLockMinutesInput.Size = UiSize(72, 30);
+        _autoLockMinutesInput.Margin = new Padding(ScaleUi(8), 0, ScaleUi(8), 0);
+        _autoLockUnitsLabel.Text = "минут бездействия";
+        _autoLockUnitsLabel.Enabled = _autoLockEnabled;
+        _autoLockUnitsLabel.AutoSize = false;
+        _autoLockUnitsLabel.Size = UiSize(Math.Max(100, contentWidth - 350), 30);
+        _autoLockUnitsLabel.Margin = Padding.Empty;
+        _autoLockUnitsLabel.TextAlign = ContentAlignment.MiddleLeft;
+        _autoLockUnitsLabel.ForeColor = Ink;
+        _autoLockUnitsLabel.Font = new Font("Segoe UI", 9.5f);
+        var autoLockRow = new FlowLayoutPanel
+        {
+            Name = "autoLockSettingsRow",
+            Location = UiPoint(24, 366),
+            Size = UiSize(contentWidth, 32),
+            FlowDirection = FlowDirection.LeftToRight,
+            WrapContents = false,
+            AutoSize = false,
+            Margin = Padding.Empty,
+            Padding = Padding.Empty,
+            BackColor = Surface
+        };
+        autoLockRow.Controls.Add(_autoLockCheck);
+        autoLockRow.Controls.Add(_autoLockMinutesInput);
+        autoLockRow.Controls.Add(_autoLockUnitsLabel);
+        securityCard.Controls.Add(autoLockRow);
+        _windowsHelloCheck.Text = "Разрешить разблокировку с помощью Windows Hello";
+        _windowsHelloCheck.Checked = _windowsHelloEnabled;
+        _windowsHelloCheck.Enabled = IsPinLockConfigured();
+        _windowsHelloCheck.Location = UiPoint(24, 400);
+        _windowsHelloCheck.Size = UiSize(contentWidth, 30);
+        securityCard.Controls.Add(_windowsHelloCheck);
+        _buildingSettingsPage = false;
+        AddLabel(securityCard, "PIN-код ограничивает доступ к окну приложения. Для защиты средств используйте пароль кошелька и храните резервную копию отдельно.",
+            24, 438, contentWidth, 48, Muted, 9.5f);
+
+        Panel notificationsCard = AddCard(22, 578, cardWidth, 328);
+        AddLabel(notificationsCard, "СИСТЕМНЫЕ УВЕДОМЛЕНИЯ", 24, 18, contentWidth, 22, Muted, 9, bold: true);
+        _notificationsCheck.Text = "Показывать уведомления Windows";
+        _notificationsCheck.Checked = _notificationsEnabled;
+        _notificationsCheck.Location = UiPoint(24, 48);
+        _notificationsCheck.Size = UiSize(contentWidth, 28);
+        notificationsCard.Controls.Add(_notificationsCheck);
+        _notifyNodeStoppedCheck.Text = "Нода остановилась или потеряла соединение";
+        _notifyNodeStoppedCheck.Checked = _notifyNodeStopped;
+        _notifyNodeStoppedCheck.Location = UiPoint(48, 80);
+        _notifyNodeStoppedCheck.Size = UiSize(contentWidth - 24, 26);
+        notificationsCard.Controls.Add(_notifyNodeStoppedCheck);
+        _notifySyncCheck.Text = "Нода завершила синхронизацию";
+        _notifySyncCheck.Checked = _notifySyncComplete;
+        _notifySyncCheck.Location = UiPoint(48, 108);
+        _notifySyncCheck.Size = UiSize(contentWidth - 24, 26);
+        notificationsCard.Controls.Add(_notifySyncCheck);
+        _notifyMiningCheck.Text = "Обнаружена новая награда за майнинг";
+        _notifyMiningCheck.Checked = _notifyMiningRewards;
+        _notifyMiningCheck.Location = UiPoint(48, 136);
+        _notifyMiningCheck.Size = UiSize(contentWidth - 24, 26);
+        notificationsCard.Controls.Add(_notifyMiningCheck);
+        _notifyIncomingTransfersCheck.Text = "Входящий перевод";
+        _notifyIncomingTransfersCheck.Checked = _notifyIncomingTransfers;
+        _notifyIncomingTransfersCheck.Location = UiPoint(48, 164);
+        _notifyIncomingTransfersCheck.Size = UiSize(contentWidth - 24, 26);
+        notificationsCard.Controls.Add(_notifyIncomingTransfersCheck);
+        _notifyOutgoingTransfersCheck.Text = "Отправленный перевод принят нодой";
+        _notifyOutgoingTransfersCheck.Checked = _notifyOutgoingTransfers;
+        _notifyOutgoingTransfersCheck.Location = UiPoint(48, 192);
+        _notifyOutgoingTransfersCheck.Size = UiSize(contentWidth - 24, 26);
+        notificationsCard.Controls.Add(_notifyOutgoingTransfersCheck);
+        _notifyNodeStoppedCheck.Enabled = _notificationsEnabled;
+        _notifySyncCheck.Enabled = _notificationsEnabled;
+        _notifyMiningCheck.Enabled = _notificationsEnabled;
+        _notifyIncomingTransfersCheck.Enabled = _notificationsEnabled;
+        _notifyOutgoingTransfersCheck.Enabled = _notificationsEnabled;
+
+        _saveNotificationsButton.Text = "Сохранить уведомления";
+        StylePrimaryButton(_saveNotificationsButton, new Point(24, 230), new Size(190, 38));
+        notificationsCard.Controls.Add(_saveNotificationsButton);
+        _reopenGuideButton.Text = "Открыть помощник первого запуска";
+        StyleSecondaryButton(_reopenGuideButton, new Point(226, 230), new Size(Math.Min(288, contentWidth - 226), 38));
+        notificationsCard.Controls.Add(_reopenGuideButton);
+        _testNotificationButton.Text = "Отправить тестовое уведомление";
+        StyleSecondaryButton(_testNotificationButton, new Point(24, 272), new Size(250, 38));
+        notificationsCard.Controls.Add(_testNotificationButton);
+
+        Panel startupCard = AddCard(22, 922, cardWidth, 154);
+        AddLabel(startupCard, "АВТОЗАПУСК", 24, 18, contentWidth, 22, Muted, 9, bold: true);
+        _updatingAutoStartCheck = true;
+        _autoStartCheck.Text = "Запускать GeoCoin-Start при входе в Windows";
+        _autoStartCheck.Checked = _autoStartEnabled;
+        _autoStartCheck.Location = UiPoint(24, 48);
+        _autoStartCheck.Size = UiSize(contentWidth, 28);
+        startupCard.Controls.Add(_autoStartCheck);
+        _updatingAutoStartCheck = false;
+        AddLabel(startupCard, "Автозапуск открывает только приложение; запуск ноды и майнинга остаётся под вашим контролем.",
+            24, 82, contentWidth, 48, Muted, 9.5f);
+    }
+
+    private bool IsPinLockConfigured() => !string.IsNullOrWhiteSpace(_protectedPinVerifier);
+
+    private void SaveSecuritySettingsFromUi()
+    {
+        string currentPin = _currentPinInput.Text;
+        string newPin = _newPinInput.Text;
+        string confirmation = _confirmPinInput.Text;
+        bool changingPin = newPin.Length > 0 || confirmation.Length > 0;
+
+        if (changingPin)
+        {
+            if (IsPinLockConfigured() && !VerifyPin(currentPin))
+            {
+                ShowLocalizedMessage("Текущий PIN-код указан неверно.", "Проверьте PIN-код", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+            int requiredLength = int.TryParse(_pinLengthCombo.SelectedItem?.ToString(), out int length) ? length : 4;
+            if (newPin.Length != requiredLength || newPin.Any(ch => ch is < '0' or > '9'))
+            {
+                ShowLocalizedMessage($"Новый PIN должен содержать ровно {requiredLength} цифры.", "Неверная длина PIN", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            if (!string.Equals(newPin, confirmation, StringComparison.Ordinal))
+            {
+                ShowLocalizedMessage("PIN-коды не совпадают.", "Проверьте ввод", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            try { _protectedPinVerifier = CreateProtectedPinVerifier(newPin); }
+            catch (Exception ex)
+            {
+                ShowLocalizedMessage("Не удалось сохранить PIN-код: " + ex.Message, "Ошибка защиты", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return;
+            }
+        }
+
+        _autoLockEnabled = _autoLockCheck.Checked;
+        _autoLockMinutes = (int)_autoLockMinutesInput.Value;
+        _windowsHelloEnabled = _windowsHelloCheck.Checked && IsPinLockConfigured();
+        _notificationsEnabled = _notificationsCheck.Checked;
+        _notifyNodeStopped = _notifyNodeStoppedCheck.Checked;
+        _notifySyncComplete = _notifySyncCheck.Checked;
+        _notifyMiningRewards = _notifyMiningCheck.Checked;
+        _notifyIncomingTransfers = _notifyIncomingTransfersCheck.Checked;
+        _notifyOutgoingTransfers = _notifyOutgoingTransfersCheck.Checked;
+        SaveUiPreferences();
+        UpdateSystemNotificationState();
+        _currentPinInput.Clear();
+        _newPinInput.Clear();
+        _confirmPinInput.Clear();
+        ShowLocalizedMessage(IsPinLockConfigured()
+                ? "Настройки безопасности сохранены. PIN блокирует окно GeoCoin-Start и не заменяет пароль кошелька."
+                : "Настройки уведомлений сохранены.",
+            "Настройки сохранены", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        BuildPage();
+    }
+
+    private void SaveNotificationSettings()
+    {
+        _notificationsEnabled = _notificationsCheck.Checked;
+        _notifyNodeStopped = _notifyNodeStoppedCheck.Checked;
+        _notifySyncComplete = _notifySyncCheck.Checked;
+        _notifyMiningRewards = _notifyMiningCheck.Checked;
+        _notifyIncomingTransfers = _notifyIncomingTransfersCheck.Checked;
+        _notifyOutgoingTransfers = _notifyOutgoingTransfersCheck.Checked;
+        SaveUiPreferences();
+        UpdateSystemNotificationState();
+        ShowLocalizedMessage("Настройки уведомлений сохранены.", "Настройки сохранены", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        BuildPage();
+    }
+
+    private void SaveAutoStartPreference()
+    {
+        if (_updatingAutoStartCheck) return;
+        bool enabled = _autoStartCheck.Checked;
+        try
+        {
+            StartupRegistration.SetEnabled(enabled);
+            _autoStartEnabled = enabled;
+            SaveUiPreferences();
+        }
+        catch (Exception ex)
+        {
+            _updatingAutoStartCheck = true;
+            _autoStartCheck.Checked = _autoStartEnabled;
+            _updatingAutoStartCheck = false;
+            ShowLocalizedMessage("Не удалось изменить настройку автозапуска: " + ex.Message,
+                "Ошибка автозапуска", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+    }
+
+    private void DisablePinFromSettings()
+    {
+        if (!IsPinLockConfigured()) return;
+        if (!VerifyPin(_currentPinInput.Text))
+        {
+            ShowLocalizedMessage("Чтобы отключить защиту, введите текущий PIN-код.", "Проверьте PIN-код", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+        _protectedPinVerifier = null;
+        _windowsHelloEnabled = false;
+        _windowsHelloCheck.Checked = false;
+        _autoLockEnabled = false;
+        _autoLockCheck.Checked = false;
+        _currentPinInput.Clear();
+        SaveUiPreferences();
+        BuildPage();
+    }
+
+    private static string CreateProtectedPinVerifier(string pin)
+    {
+        byte[] salt = RandomNumberGenerator.GetBytes(16);
+        byte[] hash = Rfc2898DeriveBytes.Pbkdf2(pin, salt, 180_000, HashAlgorithmName.SHA256, 32);
+        byte[] payload = new byte[salt.Length + hash.Length];
+        Buffer.BlockCopy(salt, 0, payload, 0, salt.Length);
+        Buffer.BlockCopy(hash, 0, payload, salt.Length, hash.Length);
+        byte[] protectedPayload = ProtectedData.Protect(payload, "GeoCoin-Start-PIN-v1"u8.ToArray(), DataProtectionScope.CurrentUser);
+        CryptographicOperations.ZeroMemory(hash);
+        CryptographicOperations.ZeroMemory(payload);
+        return Convert.ToBase64String(protectedPayload);
+    }
+
+    private bool VerifyPin(string pin)
+    {
+        if (!IsPinLockConfigured()) return false;
+        try
+        {
+            byte[] protectedPayload = Convert.FromBase64String(_protectedPinVerifier!);
+            byte[] payload = ProtectedData.Unprotect(protectedPayload, "GeoCoin-Start-PIN-v1"u8.ToArray(), DataProtectionScope.CurrentUser);
+            if (payload.Length != 48) return false;
+            byte[] salt = payload.AsSpan(0, 16).ToArray();
+            byte[] expected = payload.AsSpan(16, 32).ToArray();
+            byte[] actual = Rfc2898DeriveBytes.Pbkdf2(pin, salt, 180_000, HashAlgorithmName.SHA256, 32);
+            bool matches = CryptographicOperations.FixedTimeEquals(expected, actual);
+            CryptographicOperations.ZeroMemory(payload);
+            CryptographicOperations.ZeroMemory(expected);
+            CryptographicOperations.ZeroMemory(actual);
+            return matches;
+        }
+        catch { return false; }
+    }
+
+    private void LockApplication()
+    {
+        if (!IsPinLockConfigured() || _applicationLocked) return;
+        _applicationLocked = true;
+        _lastUiActivityUtc = DateTimeOffset.UtcNow;
+        _lockPinInput.Clear();
+        _lockMessage.Text = "";
+        UpdateLockScreenMetrics();
+        _lockOverlay.BackColor = Canvas;
+        _lockOverlay.Visible = true;
+        _lockOverlay.BringToFront();
+        ApplyThemeToTree(_lockOverlay);
+        ApplyUiLanguage(_lockOverlay);
+        BeginInvoke((Action)(() => _lockPinInput.Focus()));
+    }
+
+    private void UnlockApplication()
+    {
+        if (!_applicationLocked) return;
+        if (_pinLockoutUntil is { } until && DateTimeOffset.UtcNow < until)
+        {
+            int seconds = Math.Max(1, (int)Math.Ceiling((until - DateTimeOffset.UtcNow).TotalSeconds));
+            _lockMessage.Text = TranslateUiText("Подождите ") + seconds + TranslateUiText(" сек. перед новой попыткой.");
+            return;
+        }
+        if (!VerifyPin(_lockPinInput.Text))
+        {
+            _lockPinInput.Clear();
+            _pinFailedAttempts++;
+            _lockMessage.ForeColor = Error;
+            if (_pinFailedAttempts >= 5)
+            {
+                _pinFailedAttempts = 0;
+                _pinLockoutUntil = DateTimeOffset.UtcNow.AddSeconds(30);
+                _lockMessage.Text = TranslateUiText("Слишком много попыток. Подождите 30 секунд.");
+            }
+            else _lockMessage.Text = TranslateUiText("PIN-код не подходит. Попробуйте ещё раз.");
+            return;
+        }
+        CompleteApplicationUnlock();
+    }
+
+    private async Task UnlockWithWindowsHelloAsync()
+    {
+        if (!_applicationLocked || !_windowsHelloEnabled) return;
+        if (!OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000))
+        {
+            _lockMessage.ForeColor = Muted;
+            _lockMessage.Text = TranslateUiText("Windows Hello доступен начиная с Windows 11. Используйте PIN-код приложения.");
+            return;
+        }
+        _lockHelloButton.Enabled = false;
+        try
+        {
+            Windows.Security.Credentials.UI.UserConsentVerificationResult result =
+                await Windows.Security.Credentials.UI.UserConsentVerifierInterop.RequestVerificationForWindowAsync(
+                    Handle, TranslateUiText("Подтвердите личность, чтобы разблокировать GeoCoin-Start."));
+            if (result == Windows.Security.Credentials.UI.UserConsentVerificationResult.Verified)
+            {
+                CompleteApplicationUnlock();
+                return;
+            }
+            _lockMessage.ForeColor = Muted;
+            _lockMessage.Text = TranslateUiText("Windows Hello не подтвердил вход. Можно попробовать ещё раз или ввести PIN.");
+        }
+        catch (Exception ex)
+        {
+            _lockMessage.ForeColor = Error;
+            _lockMessage.Text = TranslateUiText("Windows Hello недоступен. Используйте PIN-код приложения.") + " " + ex.Message;
+        }
+        finally { _lockHelloButton.Enabled = true; }
+    }
+
+    private void CompleteApplicationUnlock()
+    {
+        _pinFailedAttempts = 0;
+        _pinLockoutUntil = null;
+        _applicationLocked = false;
+        _lastUiActivityUtc = DateTimeOffset.UtcNow;
+        _lockOverlay.Visible = false;
+        _lockPinInput.Clear();
+        Activate();
+    }
+
+    private void UpdateLockScreenMetrics()
+    {
+        if (_lockOverlay.IsDisposed) return;
+        int lifetime;
+        int today;
+        int session;
+        DateTime todayDate = DateTime.Now.Date;
+        lock (_minedBlocksLock)
+        {
+            lifetime = _lifetimeMinedBlockIds.Count;
+            today = _minedBlockRecords.Where(record => record.Timestamp > 0 &&
+                    DateTimeOffset.FromUnixTimeSeconds(record.Timestamp).ToLocalTime().Date == todayDate)
+                .Select(record => record.BlockId).Distinct(StringComparer.OrdinalIgnoreCase).Count();
+            session = _miningSessionBlockIds.Count;
+        }
+        _lockBalance.Text = TranslateUiText("Баланс: ") +
+            (IsNodeRunning() ? FormatGcAmount(_balance) : "— GC");
+        _lockBlocks.Text = TranslateUiText("Добыто блоков: ") + lifetime.ToString("N0", CultureInfo.CurrentCulture) +
+            TranslateUiText(" · сегодня: ") + today.ToString("N0", CultureInfo.CurrentCulture) +
+            TranslateUiText(" · сессия: ") + session.ToString("N0", CultureInfo.CurrentCulture);
+        string cpu = _cpuMiningActive ? TranslateUiText("CPU: ") + FormatHashrate(_cpuHashrateValue) : "";
+        string gpu = _gpuMiningActive ? TranslateUiText("GPU: ") + _gpuHashrateText.Replace("Скорость GPU: ", "", StringComparison.Ordinal) : "";
+        _lockHashrate.Text = TranslateUiText("Хешрейт: ") + (string.Join(" · ", new[] { cpu, gpu }.Where(value => value.Length > 0)) is { Length: > 0 } rate ? rate : "—");
+        string node = IsNodeRunning()
+            ? (_rpcHealthy ? _nodeStatus : "Нода запущена, RPC не отвечает")
+            : "Нода остановлена";
+        _lockNodeStatus.Text = TranslateUiText("Состояние ноды: ") + TranslateUiText(node) +
+            (IsNodeRunning() ? Environment.NewLine + TranslateUiText("Пиров: ") + _connections.ToString(CultureInfo.CurrentCulture) : "");
+        _lockUnlockButton.Enabled = _pinLockoutUntil is null || DateTimeOffset.UtcNow >= _pinLockoutUntil;
+        _lockHelloButton.Visible = _windowsHelloEnabled;
+        if (_lockMessage.Text.Length == 0) _lockMessage.ForeColor = Muted;
+        ApplyUiLanguage(_lockOverlay);
+    }
+
+    private void InitializeSystemNotifications()
+    {
+        _notificationMenu = new ContextMenuStrip();
+        _trayOpenMenuItem = _notificationMenu.Items.Add(TranslateUiText("Открыть GeoCoin-Start"), null, (_, _) => RestoreFromSystemTray());
+        _notificationMenu.Items.Add(new ToolStripSeparator());
+        _trayExitMenuItem = _notificationMenu.Items.Add(TranslateUiText("Выйти из GeoCoin-Start"), null, (_, _) =>
+        {
+            _trayExitRequested = true;
+            Close();
+        });
+        _systemNotificationIcon = new NotifyIcon
+        {
+            Text = "GeoCoin-Start",
+            Icon = Icon ?? SystemIcons.Application,
+            ContextMenuStrip = _notificationMenu,
+            Visible = true
+        };
+        _systemNotificationIcon.DoubleClick += (_, _) => RestoreFromSystemTray();
+    }
+
+    private void HideToSystemTray()
+    {
+        if (IsPinLockConfigured()) LockApplication();
+        ShowInTaskbar = false;
+        Hide();
+    }
+
+    private void RestoreFromSystemTray()
+    {
+        ShowInTaskbar = true;
+        if (WindowState == FormWindowState.Minimized) WindowState = FormWindowState.Normal;
+        Show();
+        Activate();
+        if (_applicationLocked) _lockPinInput.Focus();
+    }
+
+    private void UpdateSystemNotificationState()
+    {
+        if (_systemNotificationIcon is not null) _systemNotificationIcon.Visible = true;
+    }
+
+    private bool ShowSystemNotification(string title, string message, ToolTipIcon icon = ToolTipIcon.Info)
+    {
+        if (!_notificationsEnabled || _systemNotificationIcon is null) return false;
+        try
+        {
+            string localizedTitle = System.Security.SecurityElement.Escape(TranslateUiText(title)) ?? "GeoCoin-Start";
+            string localizedMessage = System.Security.SecurityElement.Escape(TranslateUiText(message)) ?? "";
+            string xml = "<toast><visual><binding template=\"ToastGeneric\"><text>" + localizedTitle +
+                "</text><text>" + localizedMessage + "</text></binding></visual></toast>";
+            var document = new Windows.Data.Xml.Dom.XmlDocument();
+            document.LoadXml(xml);
+            var notification = new Windows.UI.Notifications.ToastNotification(document);
+            var notifier = Windows.UI.Notifications.ToastNotificationManager.CreateToastNotifier(AppPaths.ToastAppUserModelId);
+            if (notifier.Setting != Windows.UI.Notifications.NotificationSetting.Enabled)
+                throw new InvalidOperationException("Windows toast notifications are blocked: " + notifier.Setting);
+            notification.Failed += (_, _) =>
+            {
+                if (IsDisposed || !IsHandleCreated) return;
+                BeginInvoke((Action)(() => ShowNotificationBalloon(title, message, icon)));
+            };
+            notifier.Show(notification);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            WriteNodeLog("Не удалось показать уведомление в центре уведомлений Windows: " + ex.Message);
+            ShowNotificationBalloon(title, message, icon);
+            return false;
+        }
+    }
+
+    private void ShowNotificationBalloon(string title, string message, ToolTipIcon icon)
+    {
+        try
+        {
+            if (_systemNotificationIcon is null) return;
+            _systemNotificationIcon.Visible = true;
+            _systemNotificationIcon.BalloonTipTitle = TranslateUiText(title);
+            _systemNotificationIcon.BalloonTipText = TranslateUiText(message);
+            _systemNotificationIcon.BalloonTipIcon = icon;
+            _systemNotificationIcon.ShowBalloonTip(8000);
+        }
+        catch { }
     }
 
     private void BuildOverviewPage()
@@ -836,7 +2095,7 @@ internal sealed class MainForm : Form
         _syncState.Font = new Font("Segoe UI Semibold", 13, FontStyle.Bold);
         _syncState.ForeColor = Ink;
         networkCard.Controls.Add(_syncState);
-        _peerState.Text = _nodeProcess is null ? "" : $"Блоков: {_height:N0}     Узлов сети: {_connections}";
+        _peerState.Text = _nodeProcess is null ? "" : FormatOverviewPeerState();
         _peerState.Location = UiPoint(26, 95);
         _peerState.AutoSize = true;
         _peerState.ForeColor = Muted;
@@ -883,6 +2142,10 @@ internal sealed class MainForm : Form
         _overviewHint.ForeColor = Muted;
         _pagePanel.Controls.Add(_overviewHint);
     }
+
+    private string FormatOverviewPeerState()
+        => TranslateUiText("Блоков: ") + _height.ToString("N0", CultureInfo.CurrentCulture) +
+            "     " + TranslateUiText("Узлов сети: ") + _connections.ToString(CultureInfo.CurrentCulture);
 
     private void BuildMiningPage()
     {
@@ -1015,13 +2278,55 @@ internal sealed class MainForm : Form
         _nodeRuntimeStatus.ForeColor = Muted;
         statusCard.Controls.Add(_nodeRuntimeStatus);
 
-        Panel rpcCard = AddCard(22, 216, cardWidth, 378);
+        _nodePeerCard = AddCard(22, 216, cardWidth, 96);
+        AddLabel(_nodePeerCard, "Пиры сети", 22, 12, cardWidth - 230, 20, Muted, 9, bold: true);
+        _nodePeerSummary.Location = UiPoint(22, 40);
+        _nodePeerSummary.Size = UiSize(cardWidth - 44, 22);
+        _nodePeerSummary.ForeColor = Ink;
+        _nodePeerSummary.AutoEllipsis = true;
+        _nodePeerSummary.Cursor = Cursors.Help;
+        _nodePeerCard.Controls.Add(_nodePeerSummary);
+        _nodePeerToggleButton.Text = "Показать список";
+        StyleSecondaryButton(_nodePeerToggleButton, new Point(cardWidth - 200, 6), new Size(178, 38));
+        _nodePeerToggleButton.TextAlign = ContentAlignment.MiddleCenter;
+        _nodePeerToggleButton.Click -= NodePeerToggleButtonClick;
+        _nodePeerToggleButton.Click += NodePeerToggleButtonClick;
+        _nodePeerCard.Controls.Add(_nodePeerToggleButton);
+        _nodeP2pHelpLink.Text = "Как открыть P2P-порт";
+        _nodeP2pHelpLink.Location = UiPoint(22, 68);
+        _nodeP2pHelpLink.Size = UiSize(210, 22);
+        _nodeP2pHelpLink.LinkColor = Accent;
+        _nodeP2pHelpLink.ActiveLinkColor = Accent;
+        _nodeP2pHelpLink.VisitedLinkColor = Accent;
+        _nodeP2pHelpLink.LinkClicked -= NodeP2pHelpLinkClicked;
+        _nodeP2pHelpLink.LinkClicked += NodeP2pHelpLinkClicked;
+        _nodePeerCard.Controls.Add(_nodeP2pHelpLink);
+        _nodePeerDetails.Location = UiPoint(22, 96);
+        _nodePeerDetails.Size = UiSize(cardWidth - 44, 136);
+        _nodePeerDetails.Multiline = true;
+        _nodePeerDetails.ReadOnly = true;
+        _nodePeerDetails.ScrollBars = ScrollBars.Vertical;
+        _nodePeerDetails.WordWrap = true;
+        _nodePeerDetails.BorderStyle = BorderStyle.FixedSingle;
+        _nodePeerDetails.Font = new Font("Segoe UI", 9);
+        _nodePeerDetails.BackColor = InputSurface;
+        _nodePeerDetails.ForeColor = Ink;
+        _nodePeerDetails.TabStop = false;
+        _nodePeerCard.Controls.Add(_nodePeerDetails);
+        _nodePeerHint.Location = UiPoint(22, 238);
+        _nodePeerHint.Size = UiSize(cardWidth - 44, 30);
+        _nodePeerHint.ForeColor = Muted;
+        _nodePeerHint.AutoEllipsis = true;
+        _nodePeerCard.Controls.Add(_nodePeerHint);
+
+        _nodeRpcCard = AddCard(22, 314, cardWidth, 378);
+        Panel rpcCard = _nodeRpcCard!;
         AddLabel(rpcCard, "ДОСТУП ДЛЯ GPU-ПОДМАЙНЕРА", 22, 15, cardWidth - 44, 20, Muted, 9, bold: true);
         AddLabel(rpcCard, "Адрес прослушивания", 22, 44, 230, 20, Ink, 10, bold: true);
         _rpcBindCombo.DropDownStyle = ComboBoxStyle.DropDownList;
         _rpcBindCombo.SelectedIndexChanged -= RpcBindComboSelectedIndexChanged;
         _rpcBindCombo.Items.Clear();
-        _rpcBindCombo.Items.Add(_englishUi ? "127.0.0.1 · this computer only" : "127.0.0.1 · только этот компьютер");
+        _rpcBindCombo.Items.Add(TranslateUiText("127.0.0.1 · только этот компьютер"));
         foreach (string address in GetPrivateIpv4Addresses()) _rpcBindCombo.Items.Add(address);
         int bindIndex = 0;
         for (int i = 1; i < _rpcBindCombo.Items.Count; i++)
@@ -1059,13 +2364,24 @@ internal sealed class MainForm : Form
         _nodeProfileHint.ForeColor = Muted;
         rpcCard.Controls.Add(_nodeProfileHint);
 
-        Panel logCard = AddCard(22, 608, cardWidth, 430);
+        _nodeLogCard = AddCard(22, 706, cardWidth, 430);
+        Panel logCard = _nodeLogCard!;
         AddLabel(logCard, "ЖУРНАЛ НОДЫ И МАЙНЕРА", 22, 15, 320, 20, Muted, 9, bold: true);
+        _pauseNodeLogUpdates.Text = "Пауза отображения журнала";
+        _pauseNodeLogUpdates.Location = UiPoint(22, 45);
+        _pauseNodeLogUpdates.Size = UiSize(cardWidth - 44, 24);
+        _pauseNodeLogUpdates.AutoSize = false;
+        _pauseNodeLogUpdates.ForeColor = Ink;
+        _pauseNodeLogUpdates.BackColor = Surface;
+        logCard.Controls.Add(_pauseNodeLogUpdates);
+        _nodeDiagnosticsCopyButton.Text = "Копировать отчёт";
+        StyleSecondaryButton(_nodeDiagnosticsCopyButton, new Point(22, 76), new Size(190, 32));
+        logCard.Controls.Add(_nodeDiagnosticsCopyButton);
         _nodeLogOpenButton.Text = "Открыть файл журнала";
-        StyleSecondaryButton(_nodeLogOpenButton, new Point(cardWidth - 228, 9), new Size(200, 32));
+        StyleSecondaryButton(_nodeLogOpenButton, new Point(222, 76), new Size(190, 32));
         logCard.Controls.Add(_nodeLogOpenButton);
-        _nodeLogBox.Location = UiPoint(18, 50);
-        _nodeLogBox.Size = UiSize(cardWidth - 38, 362);
+        _nodeLogBox.Location = UiPoint(18, 116);
+        _nodeLogBox.Size = UiSize(cardWidth - 38, 296);
         _nodeLogBox.Multiline = true;
         _nodeLogBox.ReadOnly = true;
         _nodeLogBox.ScrollBars = ScrollBars.Both;
@@ -1075,6 +2391,7 @@ internal sealed class MainForm : Form
         _nodeLogBox.ForeColor = Color.FromArgb(218, 226, 216);
         _nodeLogBox.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Bottom;
         logCard.Controls.Add(_nodeLogBox);
+        UpdateNodePeerCardLayout(cardWidth);
         UpdateNodePage();
     }
 
@@ -1143,7 +2460,7 @@ internal sealed class MainForm : Form
             _gpuMinerProcess is null && SelectedGpuDevices().Count > 0);
         card.Controls.Add(_remoteGpuButton);
         AddParagraph("На узле нужен miner RPC-пользователь и пароль; admin RPC и пароль кошелька сюда не вводите. Подключайтесь только по доверенной LAN/VPN: RPC не шифрует пароль при передаче.",
-            22, 832, cardWidth, 54);
+            22, 832, cardWidth, 82);
         UpdateMinedBlockCounters();
     }
 
@@ -1169,6 +2486,18 @@ internal sealed class MainForm : Form
         _nodeRpcStatus.Text = running ? (_rpcHealthy ? "RPC отвечает" : "Процесс запущен · проверяю RPC…") : "RPC не запущен";
         _nodeRpcStatus.ForeColor = _rpcHealthy ? Success : Muted;
         _nodePeerStatus.Text = running ? $"Блоков: {_height:N0} · подключений: {_connections}" : "Сеть: —";
+        if (!running)
+        {
+            _nodePeerDiagnostics.Clear();
+            _peerDiagnosticsAvailable = false;
+            _peerListAvailable = false;
+            _lastPeerDiagnosticsRefreshUtc = DateTime.MinValue;
+        }
+        else if (!_peerDiagnosticsLoading && DateTime.UtcNow - _lastPeerDiagnosticsRefreshUtc >= TimeSpan.FromSeconds(12))
+        {
+            _ = RefreshPeerDiagnosticsAsync();
+        }
+        UpdateNodePeerDisplay(running);
         string runTime = "";
         if (_nodeProcess is { } process && IsNodeProcessRunning())
         {
@@ -1183,7 +2512,7 @@ internal sealed class MainForm : Form
         }
         if (_nodeProfileCopyButton.IsHandleCreated)
             _nodeProfileCopyButton.Enabled = running && _rpcBindAddress != "127.0.0.1";
-        if (_nodeLogBox.IsHandleCreated)
+        if (_nodeLogBox.IsHandleCreated && !_pauseNodeLogUpdates.Checked)
         {
             string content = ReadNodeLogTail();
             if (!string.Equals(content, _nodeLogBox.Text, StringComparison.Ordinal))
@@ -1193,6 +2522,297 @@ internal sealed class MainForm : Form
                 _nodeLogBox.ScrollToCaret();
             }
         }
+    }
+
+    private void NodePeerToggleButtonClick(object? sender, EventArgs e)
+    {
+        _nodePeersExpanded = !_nodePeersExpanded;
+        UpdateNodePeerCardLayout(PageCardWidth(800));
+        UpdateNodePeerDisplay(IsNodeRunning());
+        _pagePanel.PerformLayout();
+    }
+
+    private void UpdateNodePeerCardLayout(int cardWidth)
+    {
+        if (_nodePeerCard is null) return;
+        int peerCardHeight = _nodePeersExpanded ? 276 : 96;
+        _nodePeerCard.Size = UiSize(cardWidth, peerCardHeight);
+        _nodePeerDetails.Visible = _nodePeersExpanded;
+        _nodePeerHint.Visible = _nodePeersExpanded;
+        if (_nodeRpcCard is not null)
+            _nodeRpcCard.Location = UiPoint(22, 216 + peerCardHeight + 14);
+        if (_nodeLogCard is not null)
+            _nodeLogCard.Location = UiPoint(22, 216 + peerCardHeight + 14 + 378 + 14);
+    }
+
+    private void UpdateNodePeerDisplay(bool running)
+    {
+        if (_nodePeerCard is null || _nodePeerCard.IsDisposed) return;
+        _nodePeerToggleButton.Text = TranslateUiText(_nodePeersExpanded ? "Скрыть список" : "Показать список");
+
+        if (!running)
+        {
+            _nodePeerSummary.Text = TranslateUiText("Запустите ноду, чтобы увидеть состояние пиров.");
+            _nodePeerToolTip.SetToolTip(_nodePeerSummary, TranslateUiText("Запустите ноду, чтобы увидеть состояние пиров."));
+            _nodePeerDetails.Text = TranslateUiText("Запустите ноду, чтобы увидеть состояние пиров.");
+            _nodePeerHint.Text = TranslateUiText("Запустите ноду, чтобы увидеть состояние пиров.");
+            return;
+        }
+
+        int active = _peerListAvailable ? _nodePeerDiagnostics.Count(peer => peer.Connected) : _connections;
+        string portRefused = _peerDiagnosticsAvailable
+            ? _nodePeerDiagnostics.Count(peer => peer.PortRefused).ToString(CultureInfo.InvariantCulture)
+            : "—";
+        string otherFailures = _peerDiagnosticsAvailable
+            ? _nodePeerDiagnostics.Count(peer => peer.OtherFailure).ToString(CultureInfo.InvariantCulture)
+            : "—";
+        _nodePeerSummary.Text = TranslateUiText("Активные: ") + active.ToString(CultureInfo.InvariantCulture) +
+            " · " + TranslateUiText("Отказ порта*: ") + portRefused +
+            " · " + TranslateUiText("Другие сбои: ") + otherFailures;
+        _nodePeerToolTip.SetToolTip(_nodePeerSummary, TranslateUiText(_peerDiagnosticsAvailable
+            ? "Отказ соединения часто указывает на закрытый порт или блокировку брандмауэром. Таймаут сам по себе не подтверждает, что порт закрыт."
+            : "Подробная диагностика недоступна. Показаны только активные подключения."));
+
+        if (!_peerListAvailable)
+        {
+            _nodePeerDetails.Text = _peerDiagnosticsLoading
+                ? TranslateUiText("Читаю состояние пиров…")
+                : TranslateUiText("Не удалось получить список пиров. Проверьте журнал ноды.");
+            _nodePeerHint.Text = _peerDiagnosticsLoading
+                ? TranslateUiText("Читаю состояние пиров…")
+                : TranslateUiText("Не удалось получить список пиров. Проверьте журнал ноды.");
+            return;
+        }
+
+        if (_nodePeerDiagnostics.Count == 0)
+        {
+            _nodePeerDetails.Text = TranslateUiText("Нет активных пиров и недавних попыток подключения.");
+        }
+        else
+        {
+            var lines = new List<string>(_nodePeerDiagnostics.Count);
+            foreach (PeerDiagnostic peer in _nodePeerDiagnostics)
+            {
+                string state;
+                if (peer.Connected) state = TranslateUiText("Подключено");
+                else if (peer.InProgress) state = TranslateUiText("Подключается");
+                else if (peer.PortRefused) state = TranslateUiText("Порт отклоняет соединение");
+                else state = TranslateUiText("Другая ошибка соединения");
+
+                string line = state + " · " + peer.Address;
+                if (peer.Connected)
+                {
+                    line += " · " + TranslateUiText(peer.Inbound ? "Входящее" : "Исходящее");
+                    line += " · " + TranslateUiText(peer.Encrypted ? "Зашифровано" : "Без шифрования");
+                    if (peer.PingMilliseconds > 0)
+                        line += " · " + TranslateUiText("Ping: ") + peer.PingMilliseconds.ToString(CultureInfo.InvariantCulture) + " ms";
+                    if (!string.IsNullOrWhiteSpace(peer.State))
+                        line += " · " + TranslateUiText("Состояние: ") + peer.State;
+                }
+                else
+                {
+                    if (peer.FailureCount > 0)
+                        line += " · " + TranslateUiText("попыток: ") + peer.FailureCount.ToString(CultureInfo.InvariantCulture);
+                    if (!string.IsNullOrWhiteSpace(peer.Error))
+                    {
+                        string error = peer.Error.Replace('\r', ' ').Replace('\n', ' ').Trim();
+                        if (error.Length > 180) error = error[..180] + "…";
+                        line += " · " + TranslateUiText("Ошибка: ") + error;
+                    }
+                }
+                lines.Add(line);
+            }
+            _nodePeerDetails.Text = string.Join(Environment.NewLine, lines);
+        }
+
+        _nodePeerHint.Text = _peerDiagnosticsAvailable
+            ? TranslateUiText("Отказ соединения часто указывает на закрытый порт или блокировку брандмауэром. Таймаут сам по себе не подтверждает, что порт закрыт.")
+            : TranslateUiText("Подробная диагностика недоступна. Показаны только активные подключения.");
+    }
+
+    private async Task RefreshPeerDiagnosticsAsync()
+    {
+        GeoCoinRpcClient? rpc = _rpc;
+        if (_peerDiagnosticsLoading || rpc is null || !IsNodeRunning()) return;
+        _peerDiagnosticsLoading = true;
+        _lastPeerDiagnosticsRefreshUtc = DateTime.UtcNow;
+        try
+        {
+            try
+            {
+                JsonElement diagnostics = await rpc.CallAsync("getconnectiondiagnostics");
+                if (!ReferenceEquals(_rpc, rpc)) return;
+                if (!diagnostics.TryGetProperty("peers", out JsonElement peers) || peers.ValueKind != JsonValueKind.Array)
+                    throw new InvalidOperationException("Peer diagnostics are not available.");
+
+                var parsed = ParseConnectedPeers(peers);
+                bool hasAttempts = diagnostics.TryGetProperty("outbound_attempts", out JsonElement attempts) &&
+                    attempts.ValueKind == JsonValueKind.Array;
+                if (hasAttempts)
+                {
+                    Dictionary<string, (int Code, DateTimeOffset Timestamp)> recentNetworkErrors = ParseRecentConnectErrors(ReadNodeLogTail());
+                    ParseOutboundAttempts(attempts, parsed, recentNetworkErrors);
+                }
+                _nodePeerDiagnostics.Clear();
+                _nodePeerDiagnostics.AddRange(parsed);
+                _peerDiagnosticsAvailable = hasAttempts;
+                _peerListAvailable = true;
+            }
+            catch
+            {
+                JsonElement peers = await rpc.CallAsync("getpeerinfo");
+                if (!ReferenceEquals(_rpc, rpc)) return;
+                if (peers.ValueKind != JsonValueKind.Array)
+                    throw new InvalidOperationException("Peer list is not available.");
+                _nodePeerDiagnostics.Clear();
+                _nodePeerDiagnostics.AddRange(ParseConnectedPeers(peers));
+                _peerDiagnosticsAvailable = false;
+                _peerListAvailable = true;
+            }
+        }
+        catch
+        {
+            if (ReferenceEquals(_rpc, rpc))
+            {
+                _nodePeerDiagnostics.Clear();
+                _peerDiagnosticsAvailable = false;
+                _peerListAvailable = false;
+            }
+        }
+        finally
+        {
+            _peerDiagnosticsLoading = false;
+            if (!IsDisposed && _currentPage == "node") UpdateNodePeerDisplay(IsNodeRunning());
+        }
+    }
+
+    private static List<PeerDiagnostic> ParseConnectedPeers(JsonElement peers)
+    {
+        var results = new List<PeerDiagnostic>();
+        if (peers.ValueKind != JsonValueKind.Array) return results;
+        foreach (JsonElement peer in peers.EnumerateArray())
+        {
+            string address = ReadString(peer, "addr");
+            if (string.IsNullOrWhiteSpace(address)) continue;
+            results.Add(new PeerDiagnostic(address, true, false, false, false,
+                ReadBool(peer, "inbound"), ReadBool(peer, "transport_encrypted"), ReadString(peer, "state"),
+                (int)Math.Clamp(Math.Round(ReadDouble(peer, "ping_rtt_ms")), 0, int.MaxValue), 0, ""));
+        }
+        return results;
+    }
+
+    private static void ParseOutboundAttempts(JsonElement attempts, List<PeerDiagnostic> results,
+        IReadOnlyDictionary<string, (int Code, DateTimeOffset Timestamp)> recentNetworkErrors)
+    {
+        var connectedAddresses = new HashSet<string>(results.Select(peer => peer.Address), StringComparer.OrdinalIgnoreCase);
+        if (attempts.ValueKind != JsonValueKind.Array) return;
+        foreach (JsonElement attempt in attempts.EnumerateArray())
+        {
+            string address = ReadString(attempt, "addr");
+            if (string.IsNullOrWhiteSpace(address) || connectedAddresses.Contains(address)) continue;
+            int failureCount = (int)Math.Clamp(ReadInt64(attempt, "fail_count"), 0, int.MaxValue);
+            bool inProgress = ReadBool(attempt, "in_progress");
+            if (failureCount <= 0 && !inProgress) continue;
+            long lastAttemptAge = ReadInt64(attempt, "last_attempt_age_ms");
+            bool inBackoff = ReadBool(attempt, "in_backoff");
+            if (lastAttemptAge > TimeSpan.FromHours(24).TotalMilliseconds && !inBackoff && !inProgress) continue;
+            string error = ReadString(attempt, "last_error");
+            if (recentNetworkErrors.TryGetValue(address, out var logFailure))
+            {
+                long attemptAgeMs = Math.Min(Math.Max(0L, lastAttemptAge), (long)TimeSpan.FromDays(7).TotalMilliseconds);
+                DateTimeOffset expectedFailureTime = DateTimeOffset.UtcNow.AddMilliseconds(-attemptAgeMs);
+                if (Math.Abs((logFailure.Timestamp - expectedFailureTime).TotalMinutes) <= 10)
+                    error = $"error={logFailure.Code}";
+            }
+            bool portRefused = failureCount > 0 && IsConnectionRefused(error);
+            results.Add(new PeerDiagnostic(address, false, portRefused, failureCount > 0 && !portRefused,
+                inProgress, false, false, "", 0, failureCount, error));
+        }
+    }
+
+    private static Dictionary<string, (int Code, DateTimeOffset Timestamp)> ParseRecentConnectErrors(string logText)
+    {
+        const string marker = "Connect failed for ";
+        const string errorMarker = " (error=";
+        var errors = new Dictionary<string, (int Code, DateTimeOffset Timestamp)>(StringComparer.OrdinalIgnoreCase);
+        foreach (string line in logText.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
+        {
+            int addressStart = line.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+            if (addressStart < 0) continue;
+            addressStart += marker.Length;
+            int errorStart = line.IndexOf(errorMarker, addressStart, StringComparison.OrdinalIgnoreCase);
+            if (errorStart <= addressStart) continue;
+            int codeStart = errorStart + errorMarker.Length;
+            int codeEnd = line.IndexOf(')', codeStart);
+            if (codeEnd < 0) continue;
+            string address = line[addressStart..errorStart].Trim();
+            int timestampEnd = line.IndexOf(']');
+            DateTimeOffset timestamp = DateTimeOffset.MinValue;
+            if (line.Length > 0 && line[0] == '[' && timestampEnd > 1)
+                DateTimeOffset.TryParse(line.AsSpan(1, timestampEnd - 1), CultureInfo.InvariantCulture,
+                    DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out timestamp);
+            if (int.TryParse(line.AsSpan(codeStart, codeEnd - codeStart), NumberStyles.Integer,
+                    CultureInfo.InvariantCulture, out int code) && !string.IsNullOrWhiteSpace(address) && timestamp != DateTimeOffset.MinValue)
+                errors[address] = (code, timestamp);
+        }
+        return errors;
+    }
+
+    private static bool IsConnectionRefused(string error)
+    {
+        if (error.Contains("refused", StringComparison.OrdinalIgnoreCase) ||
+            error.Contains("ECONNREFUSED", StringComparison.OrdinalIgnoreCase)) return true;
+        int marker = error.IndexOf("error=", StringComparison.OrdinalIgnoreCase);
+        if (marker < 0) marker = error.IndexOf("errno=", StringComparison.OrdinalIgnoreCase);
+        if (marker < 0) return false;
+        marker += 6;
+        int end = marker;
+        while (end < error.Length && char.IsDigit(error[end])) end++;
+        return int.TryParse(error.AsSpan(marker, end - marker), NumberStyles.Integer,
+            CultureInfo.InvariantCulture, out int code) && code is 10061 or 111;
+    }
+
+    private void NodeP2pHelpLinkClicked(object? sender, LinkLabelLinkClickedEventArgs e)
+    {
+        (string Title, string Message) help = _uiLanguage switch
+        {
+            "en" => ("Help the GeoCoin network", "To accept inbound peers and help the network:\n\n" +
+                "1. Keep GeoCoin-Start and the node running. The degree mainnet uses TCP port 3030.\n" +
+                "2. In Windows Defender Firewall, add an inbound TCP rule for port 3030 (or allow geocoin-node.exe) on Private networks.\n" +
+                "3. If your PC is behind a router, reserve its private LAN IP and forward external TCP 3030 to that PC on TCP 3030.\n" +
+                "4. Your ISP must provide a publicly reachable IP. CGNAT or double NAT usually prevents inbound connections; ask your ISP for a public IP.\n" +
+                "5. Never forward RPC port 3033 to the public Internet. Use it only on this PC or a trusted LAN/VPN.\n\n" +
+                "Leave the node online, then check incoming peers in this list. A port check can succeed only while the node is running."),
+            "zh-CN" => ("帮助 GeoCoin 网络", "要接受入站节点并帮助网络：\n\n" +
+                "1. 保持 GeoCoin-Start 和节点运行。degree 主网使用 TCP 端口 3030。\n" +
+                "2. 在 Windows Defender 防火墙中添加 TCP 3030 入站规则（或允许 geocoin-node.exe），仅限专用网络。\n" +
+                "3. 如果电脑连接到路由器，请为电脑保留固定的局域网 IP，并将外部 TCP 3030 转发到电脑的 TCP 3030。\n" +
+                "4. 互联网服务提供商必须提供可从公网访问的 IP。CGNAT 或双重 NAT 通常会阻止入站连接；请向服务商申请公网 IP。\n" +
+                "5. 切勿将 RPC 端口 3033 转发到公网。仅在本机或可信 LAN/VPN 中使用。\n\n" +
+                "保持节点在线，然后在此列表中查看入站节点。只有节点运行时，端口检查才有效。"),
+            "pt-BR" => ("Ajude a rede GeoCoin", "Para aceitar conexões de entrada e ajudar a rede:\n\n" +
+                "1. Mantenha o GeoCoin-Start e o nó em execução. A rede principal degree usa a porta TCP 3030.\n" +
+                "2. No Firewall do Windows Defender, crie uma regra de entrada TCP para a porta 3030 (ou permita geocoin-node.exe), somente em redes privadas.\n" +
+                "3. Se o PC estiver atrás de um roteador, reserve um IP privado fixo para ele e encaminhe a porta TCP externa 3030 para a TCP 3030 do PC.\n" +
+                "4. Seu provedor precisa fornecer um IP acessível publicamente. CGNAT ou NAT duplo geralmente impede conexões de entrada; solicite um IP público ao provedor.\n" +
+                "5. Nunca encaminhe a porta RPC 3033 para a Internet pública. Use-a somente neste PC ou em uma LAN/VPN confiável.\n\n" +
+                "Deixe o nó online e confira os peers de entrada nesta lista. O teste de porta só funciona enquanto o nó está em execução."),
+            "it" => ("Aiuta la rete GeoCoin", "Per accettare peer in ingresso e aiutare la rete:\n\n" +
+                "1. Tieni GeoCoin-Start e il nodo in esecuzione. La mainnet degree usa la porta TCP 3030.\n" +
+                "2. In Windows Defender Firewall crea una regola TCP in ingresso per la porta 3030 (oppure consenti geocoin-node.exe), solo sulle reti private.\n" +
+                "3. Se il PC è collegato a un router, assegna un IP LAN privato fisso e inoltra la porta TCP esterna 3030 alla TCP 3030 del PC.\n" +
+                "4. Il provider deve fornire un IP raggiungibile pubblicamente. CGNAT o doppio NAT di solito impediscono le connessioni in ingresso; chiedi un IP pubblico al provider.\n" +
+                "5. Non inoltrare mai la porta RPC 3033 su Internet. Usala solo su questo PC o su una LAN/VPN fidata.\n\n" +
+                "Lascia il nodo online e controlla i peer in ingresso in questo elenco. Il controllo della porta funziona solo mentre il nodo è attivo."),
+            _ => ("Поддержать сеть GeoCoin", "Чтобы принимать входящие подключения и помогать сети:\n\n" +
+                "1. Оставьте GeoCoin-Start и ноду запущенными. В основной сети degree используется TCP-порт 3030.\n" +
+                "2. В брандмауэре Защитника Windows создайте входящее правило для TCP-порта 3030 (или разрешите geocoin-node.exe) только для частных сетей.\n" +
+                "3. Если компьютер подключён через роутер, закрепите за ним частный IP-адрес и настройте проброс внешнего TCP-порта 3030 на TCP-порт 3030 этого компьютера.\n" +
+                "4. Провайдер должен выдавать публичный IP-адрес. CGNAT или двойной NAT обычно мешают входящим подключениям; запросите у провайдера публичный IP.\n" +
+                "5. Не перенаправляйте RPC-порт 3033 в интернет. Используйте его только на этом компьютере или в доверенной LAN/VPN.\n\n" +
+                "Оставьте ноду в сети и проверьте входящие подключения в списке пиров. Проверка порта снаружи работает только при запущенной ноде.")
+        };
+        ShowLocalizedMessage(help.Message, help.Title, MessageBoxButtons.OK, MessageBoxIcon.Information);
     }
 
     private static List<string> GetPrivateIpv4Addresses()
@@ -1239,6 +2859,43 @@ internal sealed class MainForm : Form
         Directory.CreateDirectory(AppPaths.DataRoot);
         if (!File.Exists(AppPaths.LogPath)) File.WriteAllText(AppPaths.LogPath, "Журнал GeoCoin-Start" + Environment.NewLine);
         Process.Start(new ProcessStartInfo { FileName = AppPaths.LogPath, UseShellExecute = true });
+    }
+
+    private void CopyNodeDiagnostics()
+    {
+        bool processRunning = IsNodeProcessRunning();
+        string rpcStatus = IsNodeRunning() ? (_rpcHealthy ? "Connected" : "Checking") : processRunning ? "Unavailable" : "Not running";
+        string gpuMining = _remoteGpuMining ? "Running (remote subminer)" : _gpuMiningActive ? "Running (local)" : "Stopped";
+        string devices = _gpuDevicesScanned ? _gpuDevices.Count.ToString(CultureInfo.InvariantCulture) : "Not scanned";
+        string report = string.Join(Environment.NewLine,
+            "GeoCoin-Start diagnostic summary",
+            $"Generated (UTC): {DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture)}",
+            $"App version: {AppPaths.AppVersion}",
+            $"OS: Windows {Environment.OSVersion.Version}",
+            $"Architecture: {(Environment.Is64BitProcess ? "x64" : "x86")}",
+            $"Official node package: {(File.Exists(AppPaths.NodePath) ? "Installed" : "Missing")}",
+            $"Local node process: {(processRunning ? "Running" : "Stopped")}",
+            $"RPC status: {rpcStatus}",
+            "Network: degree",
+            $"Block height: {(processRunning ? _height.ToString("N0", CultureInfo.InvariantCulture) : "Not available")}",
+            $"Known headers: {(processRunning ? _headers.ToString("N0", CultureInfo.InvariantCulture) : "Not available")}",
+            $"Connected peers: {(processRunning ? _connections.ToString(CultureInfo.InvariantCulture) : "Not available")}",
+            $"CPU mining: {(_cpuMiningActive ? "Running" : "Stopped")}",
+            $"GPU mining: {gpuMining}",
+            $"GPU devices detected: {devices}");
+
+        try
+        {
+            Clipboard.SetText(report);
+            ShowLocalizedMessage(
+                "Диагностическая сводка скопирована. Она содержит только технический статус, без адресов кошелька и паролей.",
+                "Диагностика", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+        catch
+        {
+            ShowLocalizedMessage("Не удалось скопировать сводку в буфер обмена.", "Диагностика",
+                MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
     }
 
     private void CopyMinerConnectionProfile()
@@ -1404,7 +3061,7 @@ internal sealed class MainForm : Form
         _transactionsAutoLoadPending = true;
 
         int cardWidth = PageCardWidth(700);
-        AddParagraph("История входящих переводов, отправок и наград за майнинг.", 22, 12, cardWidth - 130, 38);
+        AddParagraph("История входящих переводов, отправок и наград за майнинг.", 22, 12, Math.Max(160, cardWidth - 154), 38);
         _refreshTransactionsButton.Text = "Обновить";
         StyleSecondaryButton(_refreshTransactionsButton, new Point(cardWidth - 112, 8), new Size(88, 34));
         _refreshTransactionsButton.Enabled = IsNodeRunning() && File.Exists(AppPaths.WalletPath) && !_loadingTransactions;
@@ -1414,7 +3071,7 @@ internal sealed class MainForm : Form
         _transactionGrid = new DataGridView
         {
             Location = UiPoint(14, 14),
-            Size = UiSize(cardWidth - 30, 410),
+            Size = UiSize(cardWidth - 30, 400),
             ReadOnly = true,
             AllowUserToAddRows = false,
             AllowUserToDeleteRows = false,
@@ -1446,31 +3103,75 @@ internal sealed class MainForm : Form
                 ? "Выберите запись, чтобы посмотреть номер транзакции."
                 : "ID транзакции: " + _selectedTransactionId;
             _copyTransactionIdButton.Enabled = !string.IsNullOrWhiteSpace(_selectedTransactionId);
+            UpdateTransactionExplorerLink();
         };
         card.Controls.Add(_transactionGrid);
 
         _transactionDetails.Text = "Выберите запись, чтобы посмотреть номер транзакции.";
-        _transactionDetails.Location = UiPoint(18, 438);
-        _transactionDetails.Size = UiSize(cardWidth - 170, 42);
+        _transactionDetails.Location = UiPoint(18, 426);
+        _transactionDetails.Size = UiSize(cardWidth - 36, 32);
         _transactionDetails.ForeColor = Muted;
         _transactionDetails.AutoEllipsis = true;
         card.Controls.Add(_transactionDetails);
 
         _copyTransactionIdButton.Text = "Копировать ID";
-        StyleSecondaryButton(_copyTransactionIdButton, new Point(cardWidth - 154, 438), new Size(132, 36));
+        StyleSecondaryButton(_copyTransactionIdButton, new Point(cardWidth - 154, 462), new Size(132, 34));
         _copyTransactionIdButton.Enabled = false;
         card.Controls.Add(_copyTransactionIdButton);
+
+        _openTransactionExplorerLink.Text = TranslateUiText("Открыть в блокчейн-обозревателе ↗");
+        _openTransactionExplorerLink.Location = UiPoint(18, 464);
+        _openTransactionExplorerLink.Size = UiSize(Math.Min(310, Math.Max(160, cardWidth - 190)), 30);
+        _openTransactionExplorerLink.TextAlign = ContentAlignment.MiddleLeft;
+        _openTransactionExplorerLink.LinkColor = Accent;
+        _openTransactionExplorerLink.ActiveLinkColor = Accent;
+        _openTransactionExplorerLink.VisitedLinkColor = Accent;
+        _openTransactionExplorerLink.LinkBehavior = LinkBehavior.HoverUnderline;
+        _openTransactionExplorerLink.Visible = false;
+        _openTransactionExplorerLink.LinkClicked += (_, _) => OpenSelectedTransactionInExplorer();
+        card.Controls.Add(_openTransactionExplorerLink);
 
         _transactionStatus.Text = !IsNodeRunning()
             ? "Сначала запустите ноду на странице «Обзор»."
             : !File.Exists(AppPaths.WalletPath)
                 ? "Создайте или импортируйте кошелёк, чтобы увидеть историю."
                 : "Запрашиваю историю кошелька…";
-        _transactionStatus.Location = UiPoint(18, 496);
-        _transactionStatus.Size = UiSize(cardWidth - 36, 28);
+        _transactionStatus.Location = UiPoint(18, 502);
+        _transactionStatus.Size = UiSize(250, 28);
         _transactionStatus.ForeColor = Muted;
         _transactionStatus.AutoEllipsis = true;
         card.Controls.Add(_transactionStatus);
+
+        _transactionsPageSizeLabel.Text = "Записей:";
+        _transactionsPageSizeLabel.Location = UiPoint(270, 502);
+        _transactionsPageSizeLabel.Size = UiSize(78, 28);
+        _transactionsPageSizeLabel.ForeColor = Muted;
+        _transactionsPageSizeLabel.Font = new Font("Segoe UI", 8.5f);
+        _transactionsPageSizeLabel.AutoEllipsis = true;
+        card.Controls.Add(_transactionsPageSizeLabel);
+
+        _transactionsPageSizeCombo.DropDownStyle = ComboBoxStyle.DropDownList;
+        if (_transactionsPageSizeCombo.Items.Count == 0)
+            _transactionsPageSizeCombo.Items.AddRange(new object[] { 15, 30, 50 });
+        _transactionsPageSizeCombo.Location = UiPoint(350, 497);
+        _transactionsPageSizeCombo.Size = UiSize(65, 30);
+        _transactionsPageSizeCombo.Font = new Font("Segoe UI", 9);
+        if (_transactionsPageSizeCombo.SelectedItem is not int)
+            _transactionsPageSizeCombo.SelectedItem = _transactionsPageSize;
+        card.Controls.Add(_transactionsPageSizeCombo);
+
+        _previousTransactionsPageButton.Text = "‹";
+        StyleSecondaryButton(_previousTransactionsPageButton, new Point(423, 496), new Size(44, 32));
+        card.Controls.Add(_previousTransactionsPageButton);
+        _transactionsPageLabel.Location = UiPoint(472, 502);
+        _transactionsPageLabel.Size = UiSize(52, 24);
+        _transactionsPageLabel.TextAlign = ContentAlignment.MiddleCenter;
+        _transactionsPageLabel.ForeColor = Muted;
+        card.Controls.Add(_transactionsPageLabel);
+        _nextTransactionsPageButton.Text = "›";
+        StyleSecondaryButton(_nextTransactionsPageButton, new Point(530, 496), new Size(44, 32));
+        card.Controls.Add(_nextTransactionsPageButton);
+        RenderTransactionsPage();
     }
 
     private void BuildUnavailableState(string heading, string explanation)
@@ -1615,7 +3316,7 @@ internal sealed class MainForm : Form
         bool existingWallet = File.Exists(AppPaths.WalletPath);
         if (existingWallet)
         {
-            walletPassword = suppliedWalletPassword ?? PasswordDialog.AskToUnlock(this);
+            walletPassword = suppliedWalletPassword ?? PasswordDialog.AskToUnlock(this, TranslateUiText);
             if (walletPassword is null) return;
         }
 
@@ -1650,7 +3351,7 @@ internal sealed class MainForm : Form
                 RedirectStandardError = true
             };
             AddArgument(start, "--data-dir", NodeCompatiblePath(AppPaths.DataRoot));
-            AddArgument(start, "--network", "degree");
+            AddArgument(start, "--network", AppPaths.NetworkId);
             start.ArgumentList.Add("--rpc");
             AddArgument(start, "--rpc-bind", _rpcBindAddress);
             if (_rpcBindAddress != "127.0.0.1")
@@ -1785,7 +3486,7 @@ internal sealed class MainForm : Form
                 "Кошелёк уже существует", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
-        string? password = PasswordDialog.AskToCreate(this);
+        string? password = PasswordDialog.AskToCreate(this, TranslateUiText);
         if (password is null) return;
         try
         {
@@ -1824,14 +3525,78 @@ internal sealed class MainForm : Form
         }
         try
         {
-            await _rpc.CallAsync("backupwallet", new[] { dialog.FileName });
+            string rpcBackupPath = dialog.FileName + $".rpc-{Guid.NewGuid():N}";
+            try
+            {
+                await _rpc.CallAsync("backupwallet", new[] { rpcBackupPath });
+                File.Move(rpcBackupPath, dialog.FileName, overwrite: false);
+            }
+            catch
+            {
+                try { if (File.Exists(rpcBackupPath)) File.Delete(rpcBackupPath); } catch { }
+                throw;
+            }
+            WalletBackupCompleted();
             ShowLocalizedMessage("Копия кошелька сохранена. Храните её отдельно от компьютера; для защищённого файла также сохраните пароль.",
                 "Копия готова", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
         catch (Exception ex)
         {
-            ShowLocalizedMessage(ex.Message, "Не удалось создать копию", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            if (!ex.Message.Contains("encrypted key vault", StringComparison.OrdinalIgnoreCase))
+            {
+                ShowLocalizedMessage(ex.Message, "Не удалось создать копию", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            if (_cpuMiningActive || _gpuMiningActive || _gpuMinerProcess is { HasExited: false })
+            {
+                ShowLocalizedMessage("Этот формат кошелька нужно копировать при остановленной ноде. Сначала остановите майнинг, затем повторите резервное копирование.",
+                    "Остановите майнинг", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            if (ShowLocalizedMessage("Этот файл кошелька нельзя скопировать через RPC. GeoCoin-Start может безопасно остановить ноду, скопировать файл и затем запустить ноду снова. При запуске может потребоваться пароль кошелька. Продолжить?",
+                    "Создать резервную копию", MessageBoxButtons.YesNo, MessageBoxIcon.Information, MessageBoxDefaultButton.Button2) != DialogResult.Yes)
+                return;
+
+            bool restartNode = IsNodeRunning();
+            try
+            {
+                if (restartNode)
+                {
+                    await StopNodeAsync();
+                    if (IsNodeRunning()) throw new InvalidOperationException("Не удалось остановить ноду для создания копии.");
+                }
+                try
+                {
+                    File.Copy(AppPaths.WalletPath, dialog.FileName, overwrite: false);
+                }
+                catch
+                {
+                    if (restartNode) await StartNodeAsync(offerWalletCreation: false);
+                    throw;
+                }
+                WalletBackupCompleted();
+                if (restartNode) await StartNodeAsync(offerWalletCreation: false);
+                string restartNote = restartNode && !IsNodeRunning()
+                    ? "\n\nКопия создана, но нода осталась остановлена. Запустите её снова со страницы «Нода»."
+                    : "";
+                ShowLocalizedMessage("Копия кошелька сохранена. Храните её отдельно от компьютера; для защищённого файла также сохраните пароль." + restartNote,
+                    "Копия готова", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+            catch (Exception fallbackError)
+            {
+                ShowLocalizedMessage("Не удалось безопасно создать копию кошелька: " + fallbackError.Message,
+                    "Не удалось создать копию", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
         }
+    }
+
+    private void WalletBackupCompleted()
+    {
+        if (_currentPage != "guide" || _firstRunBackupConfirmed) return;
+        _firstRunBackupConfirmed = true;
+        SaveUiPreferences();
+        BuildPage();
     }
 
     private async Task ImportWalletAsync()
@@ -1856,7 +3621,7 @@ internal sealed class MainForm : Form
                 MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
-        string? sourcePassword = PasswordDialog.AskToUnlock(this);
+        string? sourcePassword = PasswordDialog.AskToUnlock(this, TranslateUiText);
         if (sourcePassword is null) return;
 
         bool replacingWallet = File.Exists(AppPaths.WalletPath);
@@ -2055,6 +3820,8 @@ internal sealed class MainForm : Form
             combo.SelectedItem = combo.Items.Cast<GpuBackend>().FirstOrDefault(item =>
                 string.Equals(item.Value, _selectedGpuBackend, StringComparison.OrdinalIgnoreCase));
             combo.DropDownStyle = ComboBoxStyle.DropDownList;
+            combo.DrawMode = DrawMode.Normal;
+            combo.FlatStyle = FlatStyle.Flat;
             combo.Location = UiPoint(location.X, location.Y);
             combo.Size = UiSize(size.Width, size.Height);
             combo.Font = new Font("Segoe UI", 10);
@@ -2134,6 +3901,65 @@ internal sealed class MainForm : Form
             _remoteGpuButton.Enabled = selectedCount > 0 && !_checkingGpuDevices && !IsNodeRunning() && _gpuMinerProcess is null;
     }
 
+    private DialogResult ShowMiningConfirmation(bool gpu, int threads)
+    {
+        string title;
+        string question;
+        string explanation;
+        if (gpu)
+        {
+            (title, question, explanation) = _uiLanguage switch
+            {
+                "en" => ("Start GPU mining", "Start GPU mining on all selected graphics cards?",
+                    "The GPUs will run under heavy load and may heat up. Rewards will go to an existing address in the current wallet."),
+                "zh-CN" => ("开始 GPU 挖矿", "在所有选中的显卡上开始 GPU 挖矿？",
+                    "显卡将以高负载运行，可能会发热。奖励将发送到当前钱包中的现有地址。"),
+                "pt-BR" => ("Iniciar mineração de GPU", "Iniciar a mineração por GPU em todas as placas de vídeo selecionadas?",
+                    "As GPUs funcionarão sob alta carga e poderão aquecer. As recompensas serão enviadas para um endereço existente na carteira atual."),
+                "it" => ("Avvia mining GPU", "Avviare il mining GPU su tutte le schede video selezionate?",
+                    "Le GPU lavoreranno sotto carico elevato e potrebbero surriscaldarsi. Le ricompense saranno inviate a un indirizzo esistente del portafoglio corrente."),
+                _ => ("Начать GPU-майнинг", "Запустить GPU-майнинг на всех отмеченных видеокартах?",
+                    "Видеокарта будет работать с высокой нагрузкой и может нагреваться. Награда поступит на существующий адрес текущего кошелька.")
+            };
+        }
+        else
+        {
+            string russianThreadWord = RussianThreadWord(threads);
+            string englishThreadWord = threads == 1 ? "thread" : "threads";
+            string portugueseThreadWord = threads == 1 ? "thread" : "threads";
+            (title, question, explanation) = _uiLanguage switch
+            {
+                "en" => ("Start mining", $"Start CPU mining with {threads} processor {englishThreadWord}?",
+                    "This will increase system load, heat, and power use. If GPU mining is already running, both will run at the same time."),
+                "zh-CN" => ("开始 CPU 挖矿", $"使用 {threads} 个处理器线程开始 CPU 挖矿？",
+                    "这会增加系统负载、发热和耗电。如果 GPU 挖矿已在运行，两者会同时运行。"),
+                "pt-BR" => ("Iniciar mineração de CPU", $"Iniciar a mineração de CPU usando {threads} {portugueseThreadWord} do processador?",
+                    "Isso aumentará o uso do sistema, o aquecimento e o consumo de energia. Se a mineração por GPU já estiver em execução, ambas funcionarão ao mesmo tempo."),
+                "it" => ("Avvia mining CPU", $"Avviare il mining CPU usando {threads} thread del processore?",
+                    "Questo aumenterà il carico sul sistema, il calore e il consumo elettrico. Se il mining GPU è già attivo, entrambi funzioneranno contemporaneamente."),
+                _ => ("Начать майнинг", $"Запустить майнинг на {threads} {russianThreadWord} процессора?",
+                    "Это увеличит нагрузку, нагрев и расход электричества. Если GPU-майнинг уже запущен, обе нагрузки будут работать одновременно.")
+            };
+        }
+
+        return ThemedMessageDialog.Show(this, question + "\n\n" + explanation, title,
+            MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button1,
+            _darkTheme, TranslateUiText);
+    }
+
+    private static string RussianThreadWord(int count)
+    {
+        int absolute = Math.Abs(count);
+        int lastTwo = absolute % 100;
+        if (lastTwo is >= 11 and <= 14) return "потоков";
+        return (absolute % 10) switch
+        {
+            1 => "поток",
+            2 or 3 or 4 => "потока",
+            _ => "потоков"
+        };
+    }
+
     private async Task ToggleCpuMiningAsync()
     {
         if (!IsNodeRunning() || _rpc is null) return;
@@ -2154,9 +3980,7 @@ internal sealed class MainForm : Form
             return;
         }
 
-        string warning = $"Запустить майнинг на {(int)_threadCount.Value} потоках процессора?\n\n" +
-                         "Это увеличит нагрузку, нагрев и расход электричества. Если GPU-майнинг уже запущен, обе нагрузки будут работать одновременно.";
-        if (ShowLocalizedMessage(warning, "Начать майнинг", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
+        if (ShowMiningConfirmation(gpu: false, threads: (int)_threadCount.Value) != DialogResult.Yes)
             return;
         try
         {
@@ -2210,9 +4034,7 @@ internal sealed class MainForm : Form
             return;
         }
 
-        string warning = "Запустить GPU-майнинг на всех отмеченных видеокартах?\n\n" +
-                         "Видеокарта будет работать с высокой нагрузкой и может нагреваться. Награда поступит на существующий адрес текущего кошелька.";
-        if (ShowLocalizedMessage(warning, "Начать GPU-майнинг", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
+        if (ShowMiningConfirmation(gpu: true, threads: 0) != DialogResult.Yes)
             return;
 
         _gpuLastError = null;
@@ -2631,21 +4453,52 @@ internal sealed class MainForm : Form
         {
             JsonElement result = await rpc.CallAsync("listtransactions", new object[] { "*", 1000, 0, true });
             if (!ReferenceEquals(rpc, _rpc) || result.ValueKind != JsonValueKind.Array) return;
+            List<JsonElement> entries = result.EnumerateArray().Select(entry => entry.Clone()).ToList();
 
             lock (_minedBlocksLock)
             {
-                foreach (JsonElement entry in result.EnumerateArray())
+                foreach (JsonElement entry in entries)
                     UpdateMinedBlockFromWalletEntryLocked(entry);
 
                 PruneMinedBlockRecordsLocked();
                 SaveMinedBlockRecordsLocked();
             }
+            UpdateIncomingTransferNotifications(entries);
             RefreshMinedBlockCountersOnUi();
         }
         catch
         {
             // The node may be starting, the wallet may be unavailable, or RPC may be reconnecting.
         }
+    }
+
+    private void UpdateIncomingTransferNotifications(IEnumerable<JsonElement> entries)
+    {
+        var currentIncomingIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (JsonElement entry in entries)
+        {
+            if (!string.Equals(ReadString(entry, "category"), "receive", StringComparison.OrdinalIgnoreCase)) continue;
+            string txid = ReadString(entry, "txid");
+            if (txid.Length == 64 && txid.All(Uri.IsHexDigit))
+                currentIncomingIds.Add(txid);
+        }
+
+        if (!_incomingTransferBaselineReady)
+        {
+            _knownIncomingTransferIds = currentIncomingIds;
+            _incomingTransferBaselineReady = true;
+            return;
+        }
+
+        List<string> newTransfers = currentIncomingIds
+            .Where(txid => !_knownIncomingTransferIds.Contains(txid))
+            .ToList();
+        _knownIncomingTransferIds = currentIncomingIds;
+
+        if (!_notificationsEnabled || !_notifyIncomingTransfers) return;
+        foreach (string _ in newTransfers)
+            ShowSystemNotification("Новый входящий перевод GeoCoin",
+                "Входящий перевод появился в истории кошелька. Откройте историю для подробностей.");
     }
 
     private async Task RefreshLifetimeWalletMinedBlocksAsync()
@@ -2687,6 +4540,8 @@ internal sealed class MainForm : Form
             _walletHistoryBackfilled = false;
             SaveMinedBlockRecordsLocked();
         }
+        _incomingTransferBaselineReady = false;
+        _knownIncomingTransferIds.Clear();
     }
 
     private void UpdateMinedBlockFromWalletEntryLocked(JsonElement entry)
@@ -2936,7 +4791,7 @@ internal sealed class MainForm : Form
     private async Task CreateReceiveAddressAsync()
     {
         if (!IsNodeRunning() || _rpc is null) return;
-        string? password = PasswordDialog.AskForAction(this, "создать адрес для получения");
+        string? password = PasswordDialog.AskForAction(this, "создать адрес для получения", TranslateUiText);
         if (password is null) return;
         try
         {
@@ -3183,65 +5038,17 @@ internal sealed class MainForm : Form
         _transactionStatus.Text = TranslateUiText("Обновляю историю кошелька…");
         try
         {
-            JsonElement result = await _rpc.CallAsync("listtransactions", new object[] { "*", 100, 0, true });
+            JsonElement result = await _rpc.CallAsync("listtransactions", new object[] { "*", 1000, 0, true });
             if (!ReferenceEquals(grid, _transactionGrid) || _currentPage != "transactions") return;
             if (result.ValueKind != JsonValueKind.Array)
                 throw new InvalidOperationException("Нода вернула историю в неизвестном формате.");
-
-            grid.Rows.Clear();
-            foreach (JsonElement entry in result.EnumerateArray())
-            {
-                string txid = ReadString(entry, "txid");
-                string category = ReadString(entry, "category").ToLowerInvariant();
-                string address = ReadString(entry, "address");
-                string operation = category switch
-                {
-                    "receive" => "Получение",
-                    "send" => "Отправка",
-                    "generate" => "Майнинг",
-                    "immature" => "Награда",
-                    "orphan" => "Отменена",
-                    _ => string.IsNullOrWhiteSpace(category) ? "Операция" : category
-                };
-                decimal amount = ReadDecimal(entry, "amount");
-                decimal fee = ReadDecimal(entry, "fee");
-                long confirmations = ReadInt64(entry, "confirmations");
-                string status = category switch
-                {
-                    "immature" => "Ожидает зрелости",
-                    "orphan" => "Отменена",
-                    _ when confirmations < 0 => "Конфликт",
-                    _ when confirmations == 0 => "Ожидает",
-                    _ => $"{confirmations:N0} подтв."
-                };
-                string date = FormatTransactionTime(entry);
-                int rowIndex = grid.Rows.Add(date, TranslateUiText(operation), FormatGcAmount(amount, includePositiveSign: true),
-                    fee == 0 ? "—" : Math.Abs(fee).ToString("0.########", UiLocalization.Culture(_uiLanguage)) + " GC", TranslateUiText(status), address);
-                DataGridViewRow row = grid.Rows[rowIndex];
-                row.Tag = txid;
-                row.Cells[5].ToolTipText = address;
-                row.Cells[2].Style.ForeColor = amount < 0 ? Error : Success;
-            }
-            if (grid.Rows.Count > 0)
-            {
-                grid.ClearSelection();
-                grid.CurrentCell = grid.Rows[0].Cells[0];
-                grid.Rows[0].Selected = true;
-                _selectedTransactionId = grid.Rows[0].Tag as string;
-                _transactionDetails.Text = string.IsNullOrWhiteSpace(_selectedTransactionId)
-                    ? TranslateUiText("Выберите запись, чтобы посмотреть номер транзакции.")
-                    : TranslateUiText("ID транзакции: " + _selectedTransactionId);
-                _copyTransactionIdButton.Enabled = !string.IsNullOrWhiteSpace(_selectedTransactionId);
-            }
-            else
-            {
-                _selectedTransactionId = null;
-                _transactionDetails.Text = TranslateUiText("Выберите запись, чтобы посмотреть номер транзакции.");
-                _copyTransactionIdButton.Enabled = false;
-            }
-            _transactionStatus.Text = TranslateUiText(grid.Rows.Count == 0
-                ? "В истории пока нет операций. После синхронизации обновите список."
-                : $"Показаны последние {grid.Rows.Count} записей. Разные выходы одной транзакции могут отображаться отдельно.");
+            _transactionEntries = result.EnumerateArray()
+                .Select(entry => entry.Clone())
+                .OrderByDescending(GetTransactionSortTimestamp)
+                .ThenBy(entry => ReadInt64(entry, "confirmations"))
+                .ToList();
+            _transactionsPageIndex = 0;
+            RenderTransactionsPage(grid);
         }
         catch (Exception ex)
         {
@@ -3256,6 +5063,105 @@ internal sealed class MainForm : Form
         }
     }
 
+    private int GetTransactionPageCount()
+        => Math.Max(1, (int)Math.Ceiling(_transactionEntries.Count / (double)Math.Max(1, _transactionsPageSize)));
+
+    private void RenderTransactionsPage() => RenderTransactionsPage(_transactionGrid);
+
+    private void RenderTransactionsPage(DataGridView? grid)
+    {
+        if (grid is null) return;
+        int pageCount = GetTransactionPageCount();
+        _transactionsPageIndex = Math.Clamp(_transactionsPageIndex, 0, pageCount - 1);
+        int firstEntryIndex = _transactionsPageIndex * _transactionsPageSize;
+        List<JsonElement> page = _transactionEntries.Skip(firstEntryIndex).Take(_transactionsPageSize).ToList();
+
+        grid.Rows.Clear();
+        foreach (JsonElement entry in page)
+        {
+            string txid = ReadString(entry, "txid");
+            string category = ReadString(entry, "category").ToLowerInvariant();
+            string address = ReadString(entry, "address");
+            string operation = category switch
+            {
+                "receive" => "Получение",
+                "send" => "Отправка",
+                "generate" => "Майнинг",
+                "immature" => "Награда",
+                "orphan" => "Отменена",
+                _ => string.IsNullOrWhiteSpace(category) ? "Операция" : category
+            };
+            decimal amount = ReadDecimal(entry, "amount");
+            decimal fee = ReadDecimal(entry, "fee");
+            long confirmations = ReadInt64(entry, "confirmations");
+            string status = category switch
+            {
+                "immature" => "Ожидает зрелости",
+                "orphan" => "Отменена",
+                _ when confirmations < 0 => "Конфликт",
+                _ when confirmations == 0 => "Ожидает",
+                _ => $"{confirmations:N0} подтв."
+            };
+            string date = FormatTransactionTime(entry);
+            int rowIndex = grid.Rows.Add(date, TranslateUiText(operation), FormatGcAmount(amount, includePositiveSign: true),
+                fee == 0 ? "—" : Math.Abs(fee).ToString("0.########", UiLocalization.Culture(_uiLanguage)) + " GC", TranslateUiText(status), address);
+            DataGridViewRow row = grid.Rows[rowIndex];
+            row.Tag = txid;
+            row.Cells[5].ToolTipText = address;
+            row.Cells[2].Style.ForeColor = amount < 0 ? Error : Success;
+        }
+
+        if (grid.Rows.Count > 0)
+        {
+            grid.ClearSelection();
+            grid.CurrentCell = grid.Rows[0].Cells[0];
+            grid.Rows[0].Selected = true;
+            _selectedTransactionId = grid.Rows[0].Tag as string;
+            _transactionDetails.Text = string.IsNullOrWhiteSpace(_selectedTransactionId)
+                ? TranslateUiText("Выберите запись, чтобы посмотреть номер транзакции.")
+                : TranslateUiText("ID транзакции: " + _selectedTransactionId);
+            _copyTransactionIdButton.Enabled = !string.IsNullOrWhiteSpace(_selectedTransactionId);
+            UpdateTransactionExplorerLink();
+        }
+        else
+        {
+            _selectedTransactionId = null;
+            _transactionDetails.Text = TranslateUiText("Выберите запись, чтобы посмотреть номер транзакции.");
+            _copyTransactionIdButton.Enabled = false;
+            UpdateTransactionExplorerLink();
+        }
+
+        if (_transactionEntries.Count == 0)
+            _transactionStatus.Text = TranslateUiText("В истории пока нет операций. После синхронизации обновите список.");
+        else
+        {
+            int first = firstEntryIndex + 1;
+            int last = firstEntryIndex + grid.Rows.Count;
+            _transactionStatus.Text = TranslateUiText("Показаны записи ") +
+                $"{first}–{last} / {_transactionEntries.Count}";
+        }
+        _transactionsPageLabel.Text = $"{_transactionsPageIndex + 1}/{pageCount}";
+        _previousTransactionsPageButton.Enabled = _transactionsPageIndex > 0;
+        _nextTransactionsPageButton.Enabled = _transactionsPageIndex + 1 < pageCount;
+    }
+
+    private static long GetTransactionSortTimestamp(JsonElement entry)
+    {
+        foreach (string propertyName in new[] { "time", "timereceived", "blocktime" })
+        {
+            if (!entry.TryGetProperty(propertyName, out JsonElement value)) continue;
+            if (value.ValueKind == JsonValueKind.Number && value.TryGetInt64(out long timestamp)) return timestamp;
+            if (value.ValueKind == JsonValueKind.String)
+            {
+                string text = value.GetString() ?? "";
+                if (long.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out timestamp)) return timestamp;
+                if (DateTimeOffset.TryParse(text, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out DateTimeOffset parsed))
+                    return parsed.ToUnixTimeSeconds();
+            }
+        }
+        return 0;
+    }
+
     private void CopySelectedTransactionId()
     {
         if (string.IsNullOrWhiteSpace(_selectedTransactionId)) return;
@@ -3268,6 +5174,39 @@ internal sealed class MainForm : Form
         {
             _transactionStatus.Text = "Не удалось скопировать ID: " + ex.Message;
         }
+    }
+
+    private void UpdateTransactionExplorerLink()
+    {
+        _openTransactionExplorerLink.Text = TranslateUiText("Открыть в блокчейн-обозревателе ↗");
+        _openTransactionExplorerLink.LinkArea = new LinkArea(0, _openTransactionExplorerLink.Text.Length);
+        _openTransactionExplorerLink.Visible = BuildTransactionExplorerUri(_selectedTransactionId) is not null;
+    }
+
+    private void OpenSelectedTransactionInExplorer()
+    {
+        Uri? uri = BuildTransactionExplorerUri(_selectedTransactionId);
+        if (uri is null) return;
+        try
+        {
+            Process.Start(new ProcessStartInfo { FileName = uri.AbsoluteUri, UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            WriteNodeLog("Не удалось открыть обозреватель транзакций: " + ex.Message);
+            ShowLocalizedMessage("Не удалось открыть обозреватель. Проверьте подключение к интернету.",
+                "Не удалось открыть обозреватель", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+    }
+
+    private static Uri? BuildTransactionExplorerUri(string? transactionId)
+    {
+        if (!string.Equals(AppPaths.NetworkId, "degree", StringComparison.Ordinal) ||
+            string.IsNullOrWhiteSpace(transactionId) || transactionId.Length != 64 ||
+            transactionId.Any(character => !Uri.IsHexDigit(character)))
+            return null;
+
+        return new Uri($"{AppPaths.TransactionExplorerBaseUrl}/tx/{Uri.EscapeDataString(transactionId)}", UriKind.Absolute);
     }
 
     private async Task RefreshWalletAddressesAsync()
@@ -3347,7 +5286,7 @@ internal sealed class MainForm : Form
         if (ShowLocalizedMessage("Этот ключ будет добавлен в текущий кошелёк. Импорт восстановит историю адреса и может занять время. Продолжить?",
                 "Импорт приватного ключа", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
             return;
-        string? password = PasswordDialog.AskForAction(this, "импортировать приватный ключ");
+        string? password = PasswordDialog.AskForAction(this, "импортировать приватный ключ", TranslateUiText);
         if (password is null) return;
 
         _walletKeyImportButton.Enabled = false;
@@ -3399,7 +5338,7 @@ internal sealed class MainForm : Form
                 "Файл уже существует", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
-        string? password = PasswordDialog.AskForAction(this, "экспортировать приватный ключ выбранного адреса");
+        string? password = PasswordDialog.AskForAction(this, "экспортировать приватный ключ выбранного адреса", TranslateUiText);
         if (password is null) return;
 
         _walletKeyExportButton.Enabled = false;
@@ -3585,7 +5524,7 @@ internal sealed class MainForm : Form
             return;
 
         _sendButton.Enabled = false;
-        _sendMessage.Text = "Отправляю перевод…";
+        _sendMessage.Text = TranslateUiText("Отправляю перевод…");
         _sendMessage.ForeColor = Muted;
         try
         {
@@ -3593,8 +5532,11 @@ internal sealed class MainForm : Form
             var parameters = new object[] { address, amount, feeEstimate.ApproximateGc, password };
             JsonElement result = await _rpc.CallAsync("sendtoaddress", parameters);
             string txid = result.ValueKind == JsonValueKind.String ? result.GetString() ?? "" : result.ToString();
-            _sendMessage.Text = "Перевод принят нодой. Номер: " + txid;
+            _sendMessage.Text = TranslateUiText("Перевод принят нодой. Номер: " + txid);
             _sendMessage.ForeColor = Success;
+            if (_notificationsEnabled && _notifyOutgoingTransfers)
+                ShowSystemNotification("Перевод отправлен",
+                    "Нода приняла перевод к отправке. Он ещё не подтверждён в блоке.");
             _sendPassword.Clear();
             await RefreshStateAsync();
         }
@@ -3612,11 +5554,14 @@ internal sealed class MainForm : Form
     private async Task RefreshStateAsync()
     {
         if (_refreshing) return;
+        bool rpcWasHealthy = _rpcHealthy;
         if (!IsNodeRunning() || _rpc is null)
         {
             _rpcHealthy = false;
             if (_nodeProcess is not null && !IsNodeProcessRunning())
             {
+                if (_notificationBaselineReady && _notifyNodeStopped)
+                    ShowSystemNotification("Нода остановлена", "Процесс GeoCoin завершился. Откройте вкладку «Нода», чтобы посмотреть журнал.", ToolTipIcon.Warning);
                 _nodeStatus = "Нода завершилась";
                 CleanupNodeSession();
                 UpdateStatus();
@@ -3630,6 +5575,7 @@ internal sealed class MainForm : Form
         {
             JsonElement chain = await _rpc.CallAsync("getblockchaininfo");
             _rpcHealthy = true;
+            _networkFailureNotified = false;
             _height = ReadInt64(chain, "blocks");
             _headers = ReadInt64(chain, "headers");
             try
@@ -3672,13 +5618,30 @@ internal sealed class MainForm : Form
                 catch { }
             }
 
+            int blocksBefore;
+            lock (_minedBlocksLock) blocksBefore = _lifetimeMinedBlockIds.Count;
+            bool hadNotificationBaseline = _notificationBaselineReady;
+            string previousNodeStatus = _nodeStatus;
             await RefreshLifetimeWalletMinedBlocksAsync();
             await RefreshWalletMinedBlocksAsync();
             _nodeStatus = _headers > 0 && _height >= _headers ? "Синхронизация завершена" : "Синхронизация";
+            int blocksAfter;
+            lock (_minedBlocksLock) blocksAfter = _lifetimeMinedBlockIds.Count;
+            if (hadNotificationBaseline && _notifyMiningRewards && blocksAfter > blocksBefore)
+                ShowSystemNotification("Новая награда GeoCoin", "История кошелька показывает новый добытый блок.");
+            if (_notifySyncComplete &&
+                _nodeStatus == "Синхронизация завершена" && previousNodeStatus != "Синхронизация завершена")
+                ShowSystemNotification("Синхронизация завершена", "Нода догнала текущую высоту сети.");
+            _notificationBaselineReady = true;
         }
         catch
         {
             _rpcHealthy = false;
+            if (rpcWasHealthy && _notificationBaselineReady && !_networkFailureNotified && _notifyNodeStopped)
+            {
+                ShowSystemNotification("Потеряно соединение с нодой", "RPC не отвечает. Проверьте состояние ноды и журнал.", ToolTipIcon.Warning);
+                _networkFailureNotified = true;
+            }
             if (_nodeProcess is not null && !IsNodeProcessRunning())
             {
                 _nodeStatus = "Нода остановлена";
@@ -3696,11 +5659,12 @@ internal sealed class MainForm : Form
                     : "Кошелёк ещё не создан";
                 _nodeState.Text = _nodeStatus;
                 _syncState.Text = SyncDescription();
-                _peerState.Text = $"Блоков: {_height:N0}     Узлов сети: {_connections}";
+                _peerState.Text = FormatOverviewPeerState();
                 UpdateOverviewMiningSummary();
             }
             RefreshMiningControls();
             if (_currentPage == "node") UpdateNodePage();
+            if (_applicationLocked) UpdateLockScreenMetrics();
             if (_transactionsAutoLoadPending && _currentPage == "transactions" && !_loadingTransactions &&
                 _rpc is not null && File.Exists(AppPaths.WalletPath))
                 _ = RefreshTransactionsAsync();
@@ -3776,6 +5740,7 @@ internal sealed class MainForm : Form
     private void UpdateStatus()
     {
         bool processRunning = IsNodeProcessRunning();
+        _lockNowButton.Visible = IsPinLockConfigured();
         _statusLabel.Text = processRunning ? _nodeStatus : "Нода остановлена";
         _statusLabel.Text = TranslateUiText(_statusLabel.Text);
         _statusLabel.ForeColor = processRunning
@@ -3785,6 +5750,7 @@ internal sealed class MainForm : Form
         _statusLabel.BackColor = processRunning
             ? (_darkTheme ? Color.FromArgb(48, 67, 53) : Color.FromArgb(229, 235, 221))
             : (_darkTheme ? Color.FromArgb(48, 55, 50) : Color.FromArgb(226, 228, 219));
+        LayoutHeaderStatus();
     }
 
     private bool IsNodeProcessRunning()
@@ -3840,16 +5806,28 @@ internal sealed class MainForm : Form
 
     private async void HandleClosing(object? sender, FormClosingEventArgs e)
     {
+        if (_allowClose) return;
+        if (e.CloseReason == CloseReason.UserClosing && !_trayExitRequested)
+        {
+            e.Cancel = true;
+            HideToSystemTray();
+            return;
+        }
         if (_startingNode || _startingRemoteGpu)
         {
             e.Cancel = true;
+            _trayExitRequested = false;
             ClearPendingUpdateInstaller(ref _updateInstallerToLaunch);
             ShowLocalizedMessage("Дождитесь завершения запуска узла или подмайнера, затем повторите выход.",
                 "Выполняется запуск", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
         bool gpuRunning = _gpuMinerProcess is { HasExited: false };
-        if (_allowClose || (!IsNodeRunning() && !gpuRunning)) return;
+        if (!IsNodeRunning() && !gpuRunning)
+        {
+            _trayExitRequested = false;
+            return;
+        }
         e.Cancel = true;
         if (_closePromptOpen) return;
         _closePromptOpen = true;
@@ -3867,8 +5845,17 @@ internal sealed class MainForm : Form
                 _allowClose = true;
                 Close();
             }
+            else
+            {
+                _trayExitRequested = false;
+                ClearPendingUpdateInstaller(ref _updateInstallerToLaunch);
+            }
         }
-        else ClearPendingUpdateInstaller(ref _updateInstallerToLaunch);
+        else
+        {
+            _trayExitRequested = false;
+            ClearPendingUpdateInstaller(ref _updateInstallerToLaunch);
+        }
         _closePromptOpen = false;
     }
 
@@ -3914,6 +5901,9 @@ internal sealed class MainForm : Form
 
     private static long ReadInt64(JsonElement value, string property)
         => value.TryGetProperty(property, out JsonElement element) && element.TryGetInt64(out long number) ? number : 0;
+
+    private static bool ReadBool(JsonElement value, string property)
+        => value.TryGetProperty(property, out JsonElement element) && element.ValueKind == JsonValueKind.True;
 
     private static string ReadString(JsonElement value, string property)
         => value.TryGetProperty(property, out JsonElement element) && element.ValueKind == JsonValueKind.String
@@ -4046,11 +6036,25 @@ internal sealed class MainForm : Form
             UiPreferences? settings = JsonSerializer.Deserialize<UiPreferences>(File.ReadAllText(AppPaths.UiSettingsPath));
             _uiLanguage = UiLocalization.NormalizeLanguage(settings?.Language);
             _darkTheme = settings?.DarkTheme ?? false;
+            _firstRunGuideCompleted = settings?.FirstRunGuideCompleted ?? false;
+            _firstRunBackupConfirmed = settings?.FirstRunBackupConfirmed ?? false;
+            _notificationsEnabled = settings?.NotificationsEnabled ?? true;
+            _notifyNodeStopped = settings?.NotifyNodeStopped ?? true;
+            _notifySyncComplete = settings?.NotifySyncComplete ?? true;
+            _notifyMiningRewards = settings?.NotifyMiningRewards ?? true;
+            _notifyIncomingTransfers = settings?.NotifyIncomingTransfers ?? true;
+            _notifyOutgoingTransfers = settings?.NotifyOutgoingTransfers ?? true;
+            _autoStartEnabled = settings?.AutoStartEnabled ?? false;
+            _autoLockEnabled = settings?.AutoLockEnabled ?? true;
+            _autoLockMinutes = Math.Clamp(settings?.AutoLockMinutes ?? 10, 1, 120);
+            _windowsHelloEnabled = settings?.WindowsHelloEnabled ?? false;
+            _protectedPinVerifier = settings?.ProtectedPinVerifier;
         }
         catch
         {
             _uiLanguage = "ru";
             _darkTheme = false;
+            _firstRunGuideCompleted = false;
         }
     }
 
@@ -4062,7 +6066,20 @@ internal sealed class MainForm : Form
             string json = JsonSerializer.Serialize(new UiPreferences
             {
                 Language = _uiLanguage,
-                DarkTheme = _darkTheme
+                DarkTheme = _darkTheme,
+                FirstRunGuideCompleted = _firstRunGuideCompleted,
+                FirstRunBackupConfirmed = _firstRunBackupConfirmed,
+                NotificationsEnabled = _notificationsEnabled,
+                NotifyNodeStopped = _notifyNodeStopped,
+                NotifySyncComplete = _notifySyncComplete,
+                NotifyMiningRewards = _notifyMiningRewards,
+                NotifyIncomingTransfers = _notifyIncomingTransfers,
+                NotifyOutgoingTransfers = _notifyOutgoingTransfers,
+                AutoStartEnabled = _autoStartEnabled,
+                AutoLockEnabled = _autoLockEnabled,
+                AutoLockMinutes = _autoLockMinutes,
+                WindowsHelloEnabled = _windowsHelloEnabled,
+                ProtectedPinVerifier = _protectedPinVerifier
             });
             File.WriteAllText(AppPaths.UiSettingsPath, json, new UTF8Encoding(false));
         }
@@ -4075,6 +6092,8 @@ internal sealed class MainForm : Form
     private void UpdatePreferenceControlText()
     {
         _themeButton.Text = _darkTheme ? "Светлая тема" : "Тёмная тема";
+        if (_trayOpenMenuItem is not null) _trayOpenMenuItem.Text = TranslateUiText("Открыть GeoCoin-Start");
+        if (_trayExitMenuItem is not null) _trayExitMenuItem.Text = TranslateUiText("Выйти из GeoCoin-Start");
         int selectedIndex = Array.IndexOf(UiLocalization.LanguageCodes, _uiLanguage);
         _languageCombo.SelectedIndex = selectedIndex >= 0 ? selectedIndex : 0;
     }
@@ -4089,12 +6108,21 @@ internal sealed class MainForm : Form
         {
             using var client = new HttpClient { Timeout = TimeSpan.FromMinutes(5) };
             client.DefaultRequestHeaders.UserAgent.ParseAdd("GeoCoin-Start");
-            client.DefaultRequestHeaders.Accept.ParseAdd("application/vnd.github+json");
-            using HttpResponseMessage response = await client.GetAsync(AppPaths.LatestReleaseApiUrl);
-            response.EnsureSuccessStatusCode();
-            using JsonDocument releaseDocument = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-            JsonElement release = releaseDocument.RootElement;
-            string tag = ReadString(release, "tag_name");
+            using HttpResponseMessage latestResponse = await client.GetAsync(
+                AppPaths.LatestReleasePageUrl, HttpCompletionOption.ResponseHeadersRead);
+            latestResponse.EnsureSuccessStatusCode();
+            Uri? latestPageUri = latestResponse.RequestMessage?.RequestUri;
+            string[] releasePath = latestPageUri?.AbsolutePath.Trim('/').Split('/') ?? Array.Empty<string>();
+            if (latestPageUri is null || latestPageUri.Scheme != Uri.UriSchemeHttps ||
+                !latestPageUri.Host.Equals("github.com", StringComparison.OrdinalIgnoreCase) ||
+                releasePath.Length != 5 ||
+                !releasePath[0].Equals("TheTimkol", StringComparison.OrdinalIgnoreCase) ||
+                !releasePath[1].Equals("geocoin-start", StringComparison.OrdinalIgnoreCase) ||
+                !releasePath[2].Equals("releases", StringComparison.OrdinalIgnoreCase) ||
+                !releasePath[3].Equals("tag", StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException("Не удалось определить последний опубликованный релиз GeoCoin-Start.");
+
+            string tag = Uri.UnescapeDataString(releasePath[4]);
             if (!TryParseReleaseVersion(tag, out Version? latestVersion) ||
                 !TryParseReleaseVersion(AppPaths.AppVersion, out Version? currentVersion))
                 throw new InvalidDataException("В релизе указан некорректный номер версии.");
@@ -4106,48 +6134,21 @@ internal sealed class MainForm : Form
                 return;
             }
 
-            JsonElement setupAsset = default;
-            JsonElement checksumAsset = default;
-            if (release.TryGetProperty("assets", out JsonElement assets) && assets.ValueKind == JsonValueKind.Array)
-            {
-                foreach (JsonElement asset in assets.EnumerateArray())
-                {
-                    string name = ReadString(asset, "name");
-                    if (name.Equals("GeoCoin-Start-Setup.exe", StringComparison.OrdinalIgnoreCase)) setupAsset = asset;
-                    else if (name.Equals("SHA256SUMS.txt", StringComparison.OrdinalIgnoreCase)) checksumAsset = asset;
-                }
-            }
-            if (setupAsset.ValueKind != JsonValueKind.Object)
-                throw new InvalidDataException("Последний релиз не содержит установщик GeoCoin-Start.");
-            string downloadUrl = ReadString(setupAsset, "browser_download_url");
-            if (string.IsNullOrWhiteSpace(downloadUrl) || !Uri.TryCreate(downloadUrl, UriKind.Absolute, out Uri? setupUri) || setupUri.Scheme != Uri.UriSchemeHttps ||
-                !setupUri.Host.Equals("github.com", StringComparison.OrdinalIgnoreCase))
-                throw new InvalidDataException("Последний релиз не содержит установщик GeoCoin-Start.");
-
-            string expectedHash = ReadString(setupAsset, "digest");
-            if (expectedHash.StartsWith("sha256:", StringComparison.OrdinalIgnoreCase))
-                expectedHash = expectedHash[7..];
-            if (!IsSha256Hex(expectedHash))
-            {
-                if (checksumAsset.ValueKind != JsonValueKind.Object)
-                    throw new InvalidDataException("В последнем релизе нет контрольной суммы установщика.");
-                string checksumUrl = ReadString(checksumAsset, "browser_download_url");
-                if (!Uri.TryCreate(checksumUrl, UriKind.Absolute, out Uri? checksumUri) ||
-                    checksumUri.Scheme != Uri.UriSchemeHttps || !checksumUri.Host.Equals("github.com", StringComparison.OrdinalIgnoreCase))
-                    throw new InvalidDataException("В последнем релизе нет контрольной суммы установщика.");
-                using HttpResponseMessage checksumResponse = await client.GetAsync(checksumUri);
-                checksumResponse.EnsureSuccessStatusCode();
-                string checksumText = await checksumResponse.Content.ReadAsStringAsync();
-                string? checksumLine = checksumText.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
-                    .FirstOrDefault(line => line.Contains("GeoCoin-Start-Setup.exe", StringComparison.OrdinalIgnoreCase));
-                expectedHash = checksumLine?.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() ?? "";
-            }
+            string releaseDownloadRoot = $"https://github.com/TheTimkol/geocoin-start/releases/download/{Uri.EscapeDataString(tag)}/";
+            var setupUri = new Uri(releaseDownloadRoot + "GeoCoin-Start-Setup.exe", UriKind.Absolute);
+            var checksumUri = new Uri(releaseDownloadRoot + "SHA256SUMS.txt", UriKind.Absolute);
+            using HttpResponseMessage checksumResponse = await client.GetAsync(checksumUri);
+            checksumResponse.EnsureSuccessStatusCode();
+            string checksumText = await checksumResponse.Content.ReadAsStringAsync();
+            string? checksumLine = checksumText.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
+                .FirstOrDefault(line => line.TrimEnd().EndsWith("GeoCoin-Start-Setup.exe", StringComparison.OrdinalIgnoreCase));
+            string expectedHash = checksumLine?.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() ?? "";
             if (!IsSha256Hex(expectedHash))
                 throw new InvalidDataException("В последнем релизе нет корректной SHA-256 суммы установщика.");
 
             string message = TranslateUiText("Доступна версия GeoCoin-Start: ") + tag + Environment.NewLine + Environment.NewLine +
                 TranslateUiText("Скачать и установить это обновление? Приложение закроется. Нода и майнер будут остановлены штатно.");
-            DialogResult install = MessageBox.Show(this, message, TranslateUiText("Доступно обновление"),
+            DialogResult install = ShowLocalizedMessage(message, "Доступно обновление",
                 MessageBoxButtons.YesNo, MessageBoxIcon.Information, MessageBoxDefaultButton.Button1);
             if (install != DialogResult.Yes) return;
 
@@ -4176,6 +6177,9 @@ internal sealed class MainForm : Form
 
             _updateInstallerToLaunch = downloadedInstaller;
             downloadedInstaller = null;
+            // An update must exit the process so the installer can replace its files;
+            // ordinary window-close behavior hides the app in the tray instead.
+            _trayExitRequested = true;
             Close();
         }
         catch (Exception ex)
@@ -4217,7 +6221,8 @@ internal sealed class MainForm : Form
 
     private DialogResult ShowLocalizedMessage(string message, string caption, MessageBoxButtons buttons, MessageBoxIcon icon,
         MessageBoxDefaultButton defaultButton = MessageBoxDefaultButton.Button1)
-        => MessageBox.Show(this, TranslateUiText(message), TranslateUiText(caption), buttons, icon, defaultButton);
+        => ThemedMessageDialog.Show(this, TranslateUiText(message), TranslateUiText(caption), buttons, icon,
+            defaultButton, _darkTheme, TranslateUiText);
 
     private string TranslateUiText(string value)
     {
@@ -4263,10 +6268,15 @@ internal sealed class MainForm : Form
             ("Перевод принят нодой. Номер: ", "Transfer accepted by the node. ID: "),
             ("Не удалось загрузить адреса кошелька: ", "Could not load wallet addresses: "),
             ("Не удалось загрузить адреса: ", "Could not load addresses: "),
+            ("Не удалось изменить настройку автозапуска: ", "Could not change startup setting: "),
             ("Не удалось импортировать ключ: ", "Could not import key: "), ("Не удалось экспортировать ключ: ", "Could not export key: "),
             ("Не удалось загрузить историю: ", "Could not load history: "),
             ("Не удалось подключиться: ", "Could not connect: "), ("Не удалось запустить GPU-майнинг: ", "Could not start GPU mining: "),
-            ("Ошибка GPU-подмайнера: ", "GPU subminer error: "), ("Ошибка GPU: ", "GPU error: ")
+            ("Ошибка GPU-подмайнера: ", "GPU subminer error: "), ("Ошибка GPU: ", "GPU error: "),
+            ("Баланс: ", "Balance: "), ("Добыто блоков: ", "Blocks mined: "), ("Хешрейт: ", "Hashrate: "),
+            ("Состояние ноды: ", "Node status: "), ("Пиров: ", "Peers: "), ("CPU: ", "CPU: "), ("GPU: ", "GPU: "),
+            ("Новый PIN должен содержать ровно ", "The new PIN must contain exactly "), ("Не удалось сохранить PIN-код: ", "Could not save PIN: "),
+            ("Подождите ", "Wait "), ("Слишком много попыток. Подождите ", "Too many attempts. Wait ")
         };
         foreach ((string source, string target) in prefixes)
         {
@@ -4299,7 +6309,7 @@ internal sealed class MainForm : Form
         }
         if (english)
         {
-            value = value.Replace("     Узлов сети: ", "     Network peers: ", StringComparison.Ordinal)
+            value = value.Replace("Узлов сети: ", "Network peers: ", StringComparison.Ordinal)
                 .Replace(" · подключений: ", " · connections: ", StringComparison.Ordinal);
             (string Russian, string English)[] hashUnits =
             {
@@ -4311,7 +6321,7 @@ internal sealed class MainForm : Form
         }
         else
         {
-            value = value.Replace("     Network peers: ", "     Узлов сети: ", StringComparison.Ordinal)
+            value = value.Replace("Network peers: ", "Узлов сети: ", StringComparison.Ordinal)
                 .Replace(" · connections: ", " · подключений: ", StringComparison.Ordinal);
             (string English, string Russian)[] hashUnits =
             {
@@ -4342,13 +6352,16 @@ internal sealed class MainForm : Form
 
         foreach (Control child in root.Controls)
             ApplyUiLanguage(child);
+
+        if (root == this)
+            LayoutHeaderStatus();
     }
 
     private void ApplyThemeToTree(Control root)
     {
         if (root == this || root == _headerPanel || root == _pagePanel)
             root.BackColor = Canvas;
-        else if (root.Name is "navigationRail" or "railFooter")
+        else if (root.Name is "navigationRail" or "navigationList" or "railFooter")
             root.BackColor = Rail;
         else if (root == _receiveQrCode)
             root.BackColor = Color.White;
@@ -4365,9 +6378,15 @@ internal sealed class MainForm : Form
             combo.BackColor = InputSurface;
             combo.ForeColor = Ink;
         }
-        else if (root is Button button && button.Parent?.Name == "navigationRail")
+        else if (root is Button button && button.Parent?.Name is "navigationRail" or "navigationList")
         {
             bool selected = string.Equals(button.Tag as string, _currentPage, StringComparison.Ordinal);
+            button.FlatStyle = FlatStyle.Flat;
+            button.FlatAppearance.BorderSize = 0;
+            button.FlatAppearance.BorderColor = Rail;
+            button.FlatAppearance.MouseOverBackColor = _darkTheme
+                ? Color.FromArgb(37, 48, 41)
+                : Color.FromArgb(39, 52, 43);
             button.BackColor = selected
                 ? (_darkTheme ? Color.FromArgb(48, 61, 52) : Color.FromArgb(44, 59, 48))
                 : Rail;
@@ -4386,7 +6405,7 @@ internal sealed class MainForm : Form
             if (label.ForeColor == LightInk || label.ForeColor == DarkInk) label.ForeColor = Ink;
             else if (label.ForeColor == LightMuted || label.ForeColor == DarkMuted) label.ForeColor = Muted;
         }
-        if (root is Button nonRailButton && nonRailButton.Parent?.Name != "navigationRail")
+        if (root is Button nonRailButton && nonRailButton.Parent?.Name is not ("navigationRail" or "navigationList"))
         {
             Color background = nonRailButton.BackColor;
             if (background == Color.White || background == DarkSurface) nonRailButton.BackColor = Surface;
