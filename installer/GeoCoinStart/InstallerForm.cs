@@ -28,6 +28,11 @@ internal sealed class InstallerForm : Form
         ["Установить"] = "Install",
         ["Перед обновлением закройте GeoCoin-Start и остановите ноду. Затем запустите установщик снова."] = "Close GeoCoin-Start before updating. Stop the node too, then run the installer again.",
         ["Сначала закройте GeoCoin-Start"] = "Close GeoCoin-Start first",
+        ["Запрашиваю штатное закрытие GeoCoin-Start…"] = "Asking GeoCoin-Start to close cleanly…",
+        ["Эта версия GeoCoin-Start не поддерживает автоматическое закрытие. Щёлкните правой кнопкой по значку программы в области уведомлений, выберите «Выйти из GeoCoin-Start», затем нажмите «Обновить» ещё раз."] = "This GeoCoin-Start version cannot close automatically. Right-click its notification-area icon, choose Exit GeoCoin-Start, then click Update again.",
+        ["Закройте GeoCoin-Start через значок в области уведомлений, затем нажмите «Обновить» ещё раз."] = "Close GeoCoin-Start from the notification area, then click Update again.",
+        ["GeoCoin-Start ещё работает. Если появилось подтверждение, разрешите остановить ноду и майнер; затем установщик продолжит работу автоматически."] = "GeoCoin-Start is still running. If a confirmation appeared, allow the node and miner to stop; setup will continue automatically.",
+        ["GeoCoin-Start не закрылся. Если вы отменили остановку, закройте клиент через значок в трее и повторите обновление."] = "GeoCoin-Start did not close. If you cancelled shutdown, close the app from the system tray and try again.",
         ["Подготавливаю установку…"] = "Preparing installation…",
         ["Установка завершена. Открываю приложение…"] = "Installation complete. Opening the app…",
         ["Установка завершена."] = "Installation complete.",
@@ -59,6 +64,18 @@ internal sealed class InstallerForm : Form
     private readonly bool _alreadyInstalled;
     private string _language;
     private bool _layingOut;
+
+    private delegate bool EnumWindowsCallback(IntPtr windowHandle, IntPtr parameter);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool EnumWindows(EnumWindowsCallback callback, IntPtr parameter);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern uint GetWindowThreadProcessId(IntPtr windowHandle, out uint processId);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern IntPtr SendMessageTimeout(IntPtr windowHandle, uint message, IntPtr wParam,
+        IntPtr lParam, uint flags, uint timeoutMilliseconds, out IntPtr result);
 
     public InstallerForm()
     {
@@ -176,18 +193,45 @@ internal sealed class InstallerForm : Form
 
     private async void InstallButtonClicked(object? sender, EventArgs e)
     {
-        if (_alreadyInstalled && IsInstalledAppRunning())
-        {
-            MessageBox.Show(this, LocalizeInstallerText("Перед обновлением закройте GeoCoin-Start и остановите ноду. Затем запустите установщик снова."),
-                LocalizeInstallerText("Сначала закройте GeoCoin-Start"), MessageBoxButtons.OK, MessageBoxIcon.Information);
-            return;
-        }
-
         _installButton.Enabled = false;
         _languageCombo.Enabled = false;
         _status.Text = LocalizeInstallerText("Подготавливаю установку…");
         try
         {
+            if (_alreadyInstalled)
+            {
+                List<int> runningAppIds = FindInstalledAppProcessIds();
+                if (runningAppIds.Count > 0)
+                {
+                    _status.Text = LocalizeInstallerText("Запрашиваю штатное закрытие GeoCoin-Start…");
+                    LayoutContent();
+                    if (!RequestInstalledAppShutdown(runningAppIds))
+                    {
+                        bool exitedDuringRequest = await WaitForInstalledAppExitAsync(TimeSpan.FromSeconds(2));
+                        if (!exitedDuringRequest)
+                        {
+                            _status.Text = LocalizeInstallerText("Закройте GeoCoin-Start через значок в области уведомлений, затем нажмите «Обновить» ещё раз.");
+                            LayoutContent();
+                            MessageBox.Show(this, LocalizeInstallerText("Эта версия GeoCoin-Start не поддерживает автоматическое закрытие. Щёлкните правой кнопкой по значку программы в области уведомлений, выберите «Выйти из GeoCoin-Start», затем нажмите «Обновить» ещё раз."),
+                                LocalizeInstallerText("Сначала закройте GeoCoin-Start"), MessageBoxButtons.OK, MessageBoxIcon.Information);
+                            return;
+                        }
+                    }
+
+                    bool closedCleanly = await WaitForInstalledAppExitAsync(TimeSpan.FromSeconds(90));
+                    if (!closedCleanly)
+                    {
+                        _status.Text = LocalizeInstallerText("GeoCoin-Start ещё работает. Если появилось подтверждение, разрешите остановить ноду и майнер; затем установщик продолжит работу автоматически.");
+                        LayoutContent();
+                        MessageBox.Show(this, LocalizeInstallerText("GeoCoin-Start не закрылся. Если вы отменили остановку, закройте клиент через значок в трее и повторите обновление."),
+                            LocalizeInstallerText("Сначала закройте GeoCoin-Start"), MessageBoxButtons.OK, MessageBoxIcon.Information);
+                        return;
+                    }
+                }
+            }
+
+            _status.Text = LocalizeInstallerText("Подготавливаю установку…");
+            LayoutContent();
             var progress = new Progress<InstallProgress>(state =>
             {
                 _progress.Value = Math.Clamp(state.Percent, 0, 100);
@@ -211,11 +255,23 @@ internal sealed class InstallerForm : Form
             _installButton.Enabled = true;
             _languageCombo.Enabled = true;
         }
+        finally
+        {
+            if (!IsDisposed && !_installButton.Enabled)
+            {
+                _installButton.Enabled = true;
+                _languageCombo.Enabled = true;
+            }
+        }
     }
 
     private static bool IsInstalledAppRunning()
+        => FindInstalledAppProcessIds().Count > 0;
+
+    private static List<int> FindInstalledAppProcessIds()
     {
         string expected = Path.GetFullPath(AppPaths.ExecutablePath);
+        var processIds = new List<int>();
         foreach (Process process in Process.GetProcessesByName(Path.GetFileNameWithoutExtension(expected)))
         {
             using (process)
@@ -223,12 +279,49 @@ internal sealed class InstallerForm : Form
                 try
                 {
                     if (process.HasExited || process.MainModule?.FileName is not string actual) continue;
-                    if (string.Equals(Path.GetFullPath(actual), expected, StringComparison.OrdinalIgnoreCase)) return true;
+                    if (string.Equals(Path.GetFullPath(actual), expected, StringComparison.OrdinalIgnoreCase))
+                        processIds.Add(process.Id);
                 }
                 catch { }
             }
         }
-        return false;
+        return processIds;
+    }
+
+    private static bool RequestInstalledAppShutdown(IEnumerable<int> processIds)
+    {
+        bool acknowledged = false;
+        foreach (int processId in processIds)
+        {
+            uint targetProcessId = (uint)processId;
+            EnumWindowsCallback callback = (windowHandle, _) =>
+            {
+                GetWindowThreadProcessId(windowHandle, out uint ownerProcessId);
+                if (ownerProcessId == targetProcessId)
+                {
+                    IntPtr delivered = SendMessageTimeout(windowHandle,
+                        (uint)AppPaths.RequestInstallerShutdownMessage, IntPtr.Zero, IntPtr.Zero,
+                        0x0002, 1500, out IntPtr response);
+                    if (delivered != IntPtr.Zero && response != IntPtr.Zero)
+                        acknowledged = true;
+                }
+                return true;
+            };
+            EnumWindows(callback, IntPtr.Zero);
+            GC.KeepAlive(callback);
+        }
+        return acknowledged;
+    }
+
+    private static async Task<bool> WaitForInstalledAppExitAsync(TimeSpan timeout)
+    {
+        DateTimeOffset deadline = DateTimeOffset.UtcNow + timeout;
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            if (!IsInstalledAppRunning()) return true;
+            await Task.Delay(250);
+        }
+        return !IsInstalledAppRunning();
     }
 
     private string LocalizeInstallerText(string russianText)

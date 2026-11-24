@@ -14,20 +14,47 @@ namespace GeoCoinStart;
 
 internal sealed class MainForm : Form
 {
-    private sealed class PageWheelComboBox : ComboBox
+    private static class NativeTheme
     {
-        [System.ComponentModel.Browsable(false)]
-        [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
-        public Action<int>? ForwardWheelToPage { get; set; }
+        [System.Runtime.InteropServices.DllImport("uxtheme.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+        public static extern int SetWindowTheme(IntPtr hwnd, string applicationName, string subIdList);
+    }
+
+    private class ThemeAwarePanel : Panel
+    {
+        public void RecreateThemeHandle()
+        {
+            if (IsHandleCreated) RecreateHandle();
+        }
+    }
+
+    private sealed class ThemeAwareFlowLayoutPanel : FlowLayoutPanel
+    {
+        public void RecreateThemeHandle()
+        {
+            if (IsHandleCreated) RecreateHandle();
+        }
+    }
+
+    private class ThemeAwareComboBox : ComboBox
+    {
+        public void RecreateThemeHandle()
+        {
+            if (IsHandleCreated) RecreateHandle();
+        }
 
         protected override void OnHandleCreated(EventArgs e)
         {
             base.OnHandleCreated(e);
-            _ = SetWindowTheme(Handle, string.Empty, string.Empty);
+            _ = NativeTheme.SetWindowTheme(Handle, string.Empty, string.Empty);
         }
+    }
 
-        [System.Runtime.InteropServices.DllImport("uxtheme.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
-        private static extern int SetWindowTheme(IntPtr hwnd, string applicationName, string subIdList);
+    private sealed class PageWheelComboBox : ThemeAwareComboBox
+    {
+        [System.ComponentModel.Browsable(false)]
+        [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
+        public Action<int>? ForwardWheelToPage { get; set; }
 
         protected override void OnMouseWheel(MouseEventArgs e)
         {
@@ -41,7 +68,23 @@ internal sealed class MainForm : Form
         }
     }
 
-    private sealed class PageWheelCheckedListBox : CheckedListBox
+    private class ThemeAwareCheckedListBox : CheckedListBox
+    {
+        public void RefreshThemeDrawing()
+        {
+            if (IsHandleCreated) Invalidate(true);
+        }
+    }
+
+    private sealed class ThemeAwareNumericUpDown : NumericUpDown
+    {
+        public void RefreshThemeDrawing()
+        {
+            if (IsHandleCreated) Invalidate(true);
+        }
+    }
+
+    private sealed class PageWheelCheckedListBox : ThemeAwareCheckedListBox
     {
         [System.ComponentModel.Browsable(false)]
         [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
@@ -205,16 +248,34 @@ internal sealed class MainForm : Form
     private static readonly Color DarkMuted = Color.FromArgb(174, 185, 173);
     private static readonly Color DarkRail = Color.FromArgb(17, 23, 20);
     private static readonly Color DarkAccent = Color.FromArgb(184, 145, 76);
-    private Color Canvas => _darkTheme ? DarkCanvas : LightCanvas;
-    private Color Surface => _darkTheme ? DarkSurface : Color.White;
-    private Color InputSurface => _darkTheme ? DarkInput : Color.FromArgb(250, 250, 247);
-    private Color Ink => _darkTheme ? DarkInk : LightInk;
-    private Color Muted => _darkTheme ? DarkMuted : LightMuted;
-    private Color Accent => _darkTheme ? DarkAccent : Color.FromArgb(166, 129, 63);
-    private Color Rail => _darkTheme ? DarkRail : LightRail;
-    private Color Divider => _darkTheme ? Color.FromArgb(61, 68, 62) : Color.FromArgb(220, 220, 214);
-    private Color Success => _darkTheme ? Color.FromArgb(118, 194, 133) : Color.FromArgb(53, 119, 74);
-    private Color Error => _darkTheme ? Color.FromArgb(240, 137, 116) : Color.FromArgb(161, 70, 53);
+    private static readonly Color ModernLightCanvas = Color.FromArgb(239, 245, 242);
+    private static readonly Color ModernLightRail = Color.FromArgb(224, 235, 230);
+    private static readonly Color ModernLightInk = Color.FromArgb(27, 43, 39);
+    private static readonly Color ModernLightMuted = Color.FromArgb(82, 105, 97);
+    private static readonly Color ModernLightAccent = Color.FromArgb(20, 126, 108);
+    private static readonly Color ModernDarkCanvas = Color.FromArgb(21, 29, 31);
+    private static readonly Color ModernDarkSurface = Color.FromArgb(32, 43, 45);
+    private static readonly Color ModernDarkInput = Color.FromArgb(41, 55, 57);
+    private static readonly Color ModernDarkInk = Color.FromArgb(234, 243, 240);
+    private static readonly Color ModernDarkMuted = Color.FromArgb(165, 188, 180);
+    private static readonly Color ModernDarkRail = Color.FromArgb(15, 23, 25);
+    private static readonly Color ModernDarkAccent = Color.FromArgb(69, 194, 173);
+    private Color Canvas => _modernDesign ? (_darkTheme ? ModernDarkCanvas : ModernLightCanvas) : (_darkTheme ? DarkCanvas : LightCanvas);
+    private Color Surface => _modernDesign ? (_darkTheme ? ModernDarkSurface : Color.White) : (_darkTheme ? DarkSurface : Color.White);
+    private Color InputSurface => _modernDesign ? (_darkTheme ? ModernDarkInput : Color.FromArgb(248, 251, 249)) : (_darkTheme ? DarkInput : Color.FromArgb(250, 250, 247));
+    private Color Ink => _modernDesign ? (_darkTheme ? ModernDarkInk : ModernLightInk) : (_darkTheme ? DarkInk : LightInk);
+    private Color Muted => _modernDesign ? (_darkTheme ? ModernDarkMuted : ModernLightMuted) : (_darkTheme ? DarkMuted : LightMuted);
+    private Color Accent => _modernDesign ? (_darkTheme ? ModernDarkAccent : ModernLightAccent) : (_darkTheme ? DarkAccent : Color.FromArgb(166, 129, 63));
+    private Color Rail => _modernDesign ? (_darkTheme ? ModernDarkRail : ModernLightRail) : (_darkTheme ? DarkRail : LightRail);
+    private Color Divider => _modernDesign
+        ? (_darkTheme ? Color.FromArgb(53, 69, 68) : Color.FromArgb(207, 222, 216))
+        : (_darkTheme ? Color.FromArgb(61, 68, 62) : Color.FromArgb(220, 220, 214));
+    private Color Success => _modernDesign
+        ? (_darkTheme ? Color.FromArgb(119, 211, 164) : Color.FromArgb(35, 119, 79))
+        : (_darkTheme ? Color.FromArgb(118, 194, 133) : Color.FromArgb(53, 119, 74));
+    private Color Error => _modernDesign
+        ? (_darkTheme ? Color.FromArgb(240, 137, 126) : Color.FromArgb(164, 62, 53))
+        : (_darkTheme ? Color.FromArgb(240, 137, 116) : Color.FromArgb(161, 70, 53));
 
     private static readonly Dictionary<string, string> RussianToEnglish = new(StringComparer.Ordinal)
     {
@@ -222,7 +283,9 @@ internal sealed class MainForm : Form
         ["ПРОСТОЙ КОШЕЛЁК"] = "SIMPLE WALLET",
         ["Обзор"] = "Overview", ["Майнинг"] = "Mining", ["Подмайнер"] = "Subminer", ["Нода"] = "Node",
         ["Отправить"] = "Send", ["Получить"] = "Receive", ["История"] = "History", ["Кошелёк"] = "Wallet",
-        ["Помощник"] = "Guide", ["Настройки"] = "Settings", ["Помощник первого запуска"] = "First-run guide",
+        ["Помощник"] = "Guide", ["Настройки"] = "Settings", ["Дизайн"] = "Design", ["Помощник первого запуска"] = "First-run guide",
+        ["Переключить на современный стиль"] = "Switch to modern design",
+        ["Переключить на классический стиль"] = "Switch to classic design",
         ["Шаг 1 из 4 · Подключите ноду"] = "Step 1 of 4 · Connect the node",
         ["Шаг 2 из 4 · Создайте или добавьте кошелёк"] = "Step 2 of 4 · Create or add a wallet",
         ["Шаг 3 из 4 · Сохраните резервную копию"] = "Step 3 of 4 · Save a backup",
@@ -275,6 +338,7 @@ internal sealed class MainForm : Form
         ["Введите пароль кошелька, чтобы экспортировать приватный ключ выбранного адреса."] = "Enter the wallet password to export the selected address's private key.",
         ["Я сохранил резервную копию"] = "I saved a backup", ["Завершить помощник"] = "Finish guide",
         ["Резервная копия"] = "Backup", ["Первый перевод или майнинг"] = "First transfer or mining",
+        ["Перевод или майнинг"] = "Transfer or mining",
         ["Пока пропустить помощник"] = "Skip the guide for now", ["Открыть помощник первого запуска"] = "Open the first-run guide",
         ["Открыть резервные копии"] = "Open wallet backup", ["Экспортировать копию сейчас"] = "Export a backup now",
         ["Этот формат кошелька нужно копировать при остановленной ноде. Сначала остановите майнинг, затем повторите резервное копирование."] = "This wallet format must be backed up while the node is stopped. Stop mining first, then try again.",
@@ -456,13 +520,23 @@ internal sealed class MainForm : Form
         .GroupBy(entry => entry.Value, StringComparer.Ordinal)
         .ToDictionary(group => group.Key, group => group.First().Key, StringComparer.Ordinal);
 
-    private readonly Panel _pagePanel = new();
+    private readonly TableLayoutPanel _shell = new();
+    private readonly Panel _navigationRail = new();
+    private readonly TableLayoutPanel _railLayout = new();
+    private readonly Panel _brandPanel = new();
+    private readonly ThemeAwareFlowLayoutPanel _navigationList = new();
+    private readonly Panel _railFooter = new();
+    private readonly PictureBox _brandIcon = new();
+    private readonly Label _brandName = new();
+    private readonly Label _brandSubtitle = new();
+    private readonly ThemeAwarePanel _pagePanel = new();
     private readonly Panel _headerPanel = new();
     private readonly Label _pageTitle = new();
     private readonly Label _pageSubtitle = new();
     private readonly Label _statusLabel = new();
-    private readonly ComboBox _languageCombo = new();
+    private readonly ThemeAwareComboBox _languageCombo = new();
     private readonly Button _themeButton = new();
+    private readonly Button _designButton = new();
     private readonly Button _checkUpdatesButton = new();
     private readonly Button _securityButton = new();
     private readonly Panel _lockOverlay = new();
@@ -475,6 +549,9 @@ internal sealed class MainForm : Form
     private readonly Button _lockUnlockButton = new();
     private readonly Button _lockHelloButton = new();
     private readonly System.Windows.Forms.Timer _idleLockTimer = new() { Interval = 15_000 };
+    private readonly ToolTip _headerToolTip = new();
+    private readonly HashSet<Button> _primaryButtons = new();
+    private readonly HashSet<Button> _secondaryButtons = new();
     private UserActivityMessageFilter? _activityMessageFilter;
     private NotifyIcon? _systemNotificationIcon;
     private ContextMenuStrip? _notificationMenu;
@@ -525,7 +602,7 @@ internal sealed class MainForm : Form
     private readonly Label _matureCoinsLabel = new();
     private readonly Label _immatureCoinsLabel = new();
     private readonly TextBox _nodeLogBox = new();
-    private readonly NumericUpDown _threadCount = new();
+    private readonly ThemeAwareNumericUpDown _threadCount = new();
     private readonly PageWheelComboBox _gpuBackendCombo = new();
     private readonly PageWheelComboBox _remoteGpuBackendCombo = new();
     private readonly PageWheelCheckedListBox _gpuDeviceList = new();
@@ -533,9 +610,9 @@ internal sealed class MainForm : Form
     private readonly HashSet<string> _selectedGpuDeviceKeys = new(StringComparer.OrdinalIgnoreCase);
     private string? _selectedGpuBackend;
     private bool _updatingGpuDeviceLists;
-    private readonly ComboBox _rpcBindCombo = new();
-    private readonly ComboBox _walletAddressCombo = new();
-    private readonly ComboBox _receiveAddressCombo = new();
+    private readonly ThemeAwareComboBox _rpcBindCombo = new();
+    private readonly ThemeAwareComboBox _walletAddressCombo = new();
+    private readonly ThemeAwareComboBox _receiveAddressCombo = new();
     private readonly PictureBox _receiveQrCode = new();
     private readonly Button _refreshGpuButton = new();
     private readonly Button _refreshTransactionsButton = new();
@@ -543,7 +620,7 @@ internal sealed class MainForm : Form
     private readonly LinkLabel _openTransactionExplorerLink = new();
     private readonly Button _previousTransactionsPageButton = new();
     private readonly Button _nextTransactionsPageButton = new();
-    private readonly ComboBox _transactionsPageSizeCombo = new();
+    private readonly ThemeAwareComboBox _transactionsPageSizeCombo = new();
     private readonly Label _transactionsPageLabel = new();
     private readonly Label _transactionsPageSizeLabel = new();
     private readonly Button _walletFileExportButton = new();
@@ -587,12 +664,12 @@ internal sealed class MainForm : Form
     private readonly Button _importPaymentQrButton = new();
     private readonly Button[] _navigation = new Button[10];
     private readonly Label _pinSettingsStatus = new();
-    private readonly ComboBox _pinLengthCombo = new();
+    private readonly ThemeAwareComboBox _pinLengthCombo = new();
     private readonly TextBox _currentPinInput = new() { UseSystemPasswordChar = true, MaxLength = 6 };
     private readonly TextBox _newPinInput = new() { UseSystemPasswordChar = true, MaxLength = 6 };
     private readonly TextBox _confirmPinInput = new() { UseSystemPasswordChar = true, MaxLength = 6 };
     private readonly CheckBox _autoLockCheck = new();
-    private readonly NumericUpDown _autoLockMinutesInput = new() { Minimum = 1, Maximum = 120, Value = 10, Width = 72 };
+    private readonly ThemeAwareNumericUpDown _autoLockMinutesInput = new() { Minimum = 1, Maximum = 120, Value = 10, Width = 72 };
     private readonly Label _autoLockUnitsLabel = new();
     private readonly CheckBox _windowsHelloCheck = new();
     private readonly CheckBox _notificationsCheck = new();
@@ -675,6 +752,8 @@ internal sealed class MainForm : Form
     private bool _trayExitRequested;
     private bool _closePromptOpen;
     private bool _darkTheme;
+    private bool _modernDesign;
+    private bool _modernNavigationLayoutQueued;
     private string _uiLanguage = "ru";
     private bool _firstRunGuideCompleted;
     private bool _firstRunBackupConfirmed;
@@ -968,15 +1047,12 @@ internal sealed class MainForm : Form
         Shown += (_, _) =>
         {
             FitWindowToScreen();
+            QueueModernNavigationLayout();
             if (IsPinLockConfigured()) BeginInvoke((Action)LockApplication);
         };
         DpiChanged += (_, _) =>
         {
-            if (Controls.Count > 0 && Controls[0] is TableLayoutPanel shell)
-            {
-                shell.ColumnStyles[0].Width = ScaleUi(224);
-                shell.RowStyles[0].Height = ScaleUi(100);
-            }
+            ApplyDesignLayout();
             LayoutHeaderStatus();
             BuildPage();
         };
@@ -986,78 +1062,74 @@ internal sealed class MainForm : Form
 
     private void BuildShell()
     {
-        var shell = new TableLayoutPanel
-        {
-            Dock = DockStyle.Fill,
-            Margin = Padding.Empty,
-            Padding = Padding.Empty,
-            ColumnCount = 2,
-            RowCount = 2,
-            BackColor = Canvas
-        };
-        shell.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, ScaleUi(224)));
-        shell.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        shell.RowStyles.Add(new RowStyle(SizeType.Absolute, ScaleUi(100)));
-        shell.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        Controls.Add(shell);
+        _shell.Dock = DockStyle.Fill;
+        _shell.Margin = Padding.Empty;
+        _shell.Padding = Padding.Empty;
+        _shell.BorderStyle = BorderStyle.None;
+        _shell.ColumnCount = 2;
+        _shell.RowCount = 2;
+        _shell.BackColor = Canvas;
+        _shell.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, ScaleUi(224)));
+        _shell.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        _shell.RowStyles.Add(new RowStyle(SizeType.Absolute, ScaleUi(100)));
+        _shell.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        Controls.Add(_shell);
 
-        var rail = new Panel { Name = "navigationRail", Dock = DockStyle.Fill, Margin = Padding.Empty, BackColor = Rail };
-        shell.Controls.Add(rail, 0, 0);
-        shell.SetRowSpan(rail, 2);
+        _navigationRail.Name = "navigationRail";
+        _navigationRail.Dock = DockStyle.Fill;
+        _navigationRail.Margin = Padding.Empty;
+        _navigationRail.BorderStyle = BorderStyle.None;
+        _navigationRail.BackColor = Rail;
 
-        var railLayout = new TableLayoutPanel
-        {
-            Dock = DockStyle.Fill,
-            Margin = Padding.Empty,
-            Padding = Padding.Empty,
-            ColumnCount = 1,
-            RowCount = 3,
-            BackColor = Rail
-        };
-        railLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        railLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, ScaleUi(112)));
-        railLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        railLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, ScaleUi(62)));
-        rail.Controls.Add(railLayout);
+        _railLayout.Dock = DockStyle.Fill;
+        _railLayout.Margin = Padding.Empty;
+        _railLayout.Padding = Padding.Empty;
+        _railLayout.BorderStyle = BorderStyle.None;
+        _railLayout.ColumnCount = 1;
+        _railLayout.RowCount = 3;
+        _railLayout.BackColor = Rail;
+        _railLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        _railLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, ScaleUi(112)));
+        _railLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        _railLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, ScaleUi(62)));
+        _navigationRail.Controls.Add(_railLayout);
 
-        var brandPanel = new Panel { Dock = DockStyle.Fill, Margin = Padding.Empty, BackColor = Rail };
-        railLayout.Controls.Add(brandPanel, 0, 0);
+        _brandPanel.Dock = DockStyle.Fill;
+        _brandPanel.Margin = Padding.Empty;
+        _brandPanel.BackColor = Rail;
+        _railLayout.Controls.Add(_brandPanel, 0, 0);
 
-        var brandIcon = new PictureBox
-        {
-            Location = UiPoint(20, 23),
-            Size = UiSize(38, 38),
-            SizeMode = PictureBoxSizeMode.Zoom,
-            Image = (Icon ?? SystemIcons.Application).ToBitmap()
-        };
-        brandPanel.Controls.Add(brandIcon);
-        brandPanel.Controls.Add(new Label
-        {
-            Text = "GeoCoin",
-            Location = UiPoint(64, 22),
-            AutoSize = true,
-            Font = new Font("Segoe UI Semibold", 22, FontStyle.Bold),
-            ForeColor = Color.FromArgb(233, 208, 153)
-        });
-        brandPanel.Controls.Add(new Label
-        {
-            Text = "ПРОСТОЙ КОШЕЛЁК",
-            Location = UiPoint(27, 70),
-            AutoSize = true,
-            Font = new Font("Segoe UI", 8, FontStyle.Bold),
-            ForeColor = Color.FromArgb(144, 161, 145)
-        });
+        _brandIcon.Location = UiPoint(20, 23);
+        _brandIcon.Size = UiSize(38, 38);
+        _brandIcon.SizeMode = PictureBoxSizeMode.Zoom;
+        _brandIcon.Image = (Icon ?? SystemIcons.Application).ToBitmap();
+        _brandPanel.Controls.Add(_brandIcon);
+        _brandName.Name = "brandName";
+        _brandName.Text = "GeoCoin";
+        _brandName.Location = UiPoint(64, 22);
+        _brandName.AutoSize = true;
+        _brandName.Font = new Font("Segoe UI Semibold", 22, FontStyle.Bold);
+        _brandName.ForeColor = Color.FromArgb(233, 208, 153);
+        _brandPanel.Controls.Add(_brandName);
+        _brandSubtitle.Name = "brandSubtitle";
+        _brandSubtitle.Text = "ПРОСТОЙ КОШЕЛЁК";
+        _brandSubtitle.Location = UiPoint(27, 70);
+        _brandSubtitle.AutoSize = true;
+        _brandSubtitle.Font = new Font("Segoe UI", 8, FontStyle.Bold);
+        _brandSubtitle.ForeColor = Color.FromArgb(144, 161, 145);
+        _brandPanel.Controls.Add(_brandSubtitle);
 
-        var navigationList = new Panel
-        {
-            Name = "navigationList",
-            Dock = DockStyle.Fill,
-            Margin = Padding.Empty,
-            Padding = Padding.Empty,
-            AutoScroll = true,
-            BackColor = Rail
-        };
-        railLayout.Controls.Add(navigationList, 0, 1);
+        _navigationList.Name = "navigationList";
+        _navigationList.Dock = DockStyle.Fill;
+        _navigationList.Margin = Padding.Empty;
+        _navigationList.Padding = UiPadding(18, 8, 18, 8);
+        _navigationList.AutoScroll = true;
+        _navigationList.WrapContents = false;
+        _navigationList.FlowDirection = FlowDirection.TopDown;
+        _navigationList.BackColor = Rail;
+        _navigationList.SizeChanged += (_, _) => QueueModernNavigationLayout();
+        _shell.SizeChanged += (_, _) => QueueModernNavigationLayout();
+        _railLayout.Controls.Add(_navigationList, 0, 1);
 
         string[] names = { "Обзор", "Майнинг", "Подмайнер", "Нода", "Отправить", "Получить", "История", "Кошелёк", "Помощник", "Настройки" };
         string[] pages = { "overview", "mining", "subminer", "node", "send", "receive", "transactions", "wallet", "guide", "settings" };
@@ -1069,9 +1141,8 @@ internal sealed class MainForm : Form
                 Text = names[i],
                 Tag = pages[i],
                 TextAlign = ContentAlignment.MiddleLeft,
-                Location = UiPoint(18, 8 + i * 44),
                 Size = UiSize(188, 38),
-                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
+                Margin = Padding.Empty,
                 FlatStyle = FlatStyle.Flat,
                 BackColor = Rail,
                 ForeColor = Color.FromArgb(206, 215, 205),
@@ -1082,17 +1153,15 @@ internal sealed class MainForm : Form
             button.FlatAppearance.BorderSize = 0;
             button.FlatAppearance.MouseOverBackColor = Color.FromArgb(36, 50, 41);
             button.Click += (_, _) => SetPage(pages[index]);
-            navigationList.Controls.Add(button);
+            _navigationList.Controls.Add(button);
             _navigation[i] = button;
         }
 
-        var railFooter = new Panel
-        {
-            Name = "railFooter",
-            Dock = DockStyle.Fill,
-            BackColor = Rail
-        };
-        railLayout.Controls.Add(railFooter, 0, 2);
+        _railFooter.Name = "railFooter";
+        _railFooter.Dock = DockStyle.Fill;
+        _railFooter.BackColor = Rail;
+        _railFooter.BorderStyle = BorderStyle.None;
+        _railLayout.Controls.Add(_railFooter, 0, 2);
 
         var originalLink = new LinkLabel
         {
@@ -1105,7 +1174,7 @@ internal sealed class MainForm : Form
             Font = new Font("Segoe UI", 8.5f)
         };
         originalLink.LinkClicked += (_, _) => OpenLink(AppPaths.OriginalRepositoryUrl);
-        railFooter.Controls.Add(originalLink);
+        _railFooter.Controls.Add(originalLink);
 
         var distributorLink = new LinkLabel
         {
@@ -1118,12 +1187,11 @@ internal sealed class MainForm : Form
             Font = new Font("Segoe UI", 8.5f)
         };
         distributorLink.LinkClicked += (_, _) => OpenLink(AppPaths.DistributorUrl);
-        railFooter.Controls.Add(distributorLink);
+        _railFooter.Controls.Add(distributorLink);
 
         _headerPanel.Dock = DockStyle.Fill;
         _headerPanel.Margin = Padding.Empty;
         _headerPanel.BackColor = Canvas;
-        shell.Controls.Add(_headerPanel, 1, 0);
         _headerPanel.Controls.Add(_pageTitle);
         _pageTitle.Location = UiPoint(34, 20);
         _pageTitle.AutoSize = true;
@@ -1142,7 +1210,6 @@ internal sealed class MainForm : Form
         _languageCombo.SelectedIndex = Math.Max(0, Array.IndexOf(UiLocalization.LanguageCodes, _uiLanguage));
         _languageCombo.Font = new Font("Segoe UI", 9);
         _languageCombo.Size = UiSize(112, 28);
-        _languageCombo.Location = UiPoint(0, 8);
         _headerPanel.Controls.Add(_languageCombo);
         _languageCombo.SelectedIndexChanged += (_, _) =>
         {
@@ -1152,6 +1219,7 @@ internal sealed class MainForm : Form
             _uiLanguage = language;
             SaveUiPreferences();
             BuildPage();
+            UpdatePreferenceControlText();
             ApplyUiLanguage(this);
             UpdateStatus();
         };
@@ -1166,6 +1234,22 @@ internal sealed class MainForm : Form
         _securityButton.Click += (_, _) => SetPage("settings");
         _headerPanel.Controls.Add(_securityButton);
 
+        StyleSecondaryButton(_designButton, new Point(0, 8), new Size(92, 28));
+        _designButton.Text = "Дизайн";
+        _designButton.Click += (_, _) =>
+        {
+            _modernDesign = !_modernDesign;
+            SaveUiPreferences();
+            ApplyDesignLayout();
+            BuildPage();
+            UpdatePreferenceControlText();
+            ApplyThemeToTree(this);
+            ApplyUiLanguage(this);
+            UpdateStatus();
+        };
+        _headerToolTip.SetToolTip(_designButton, TranslateUiText(_modernDesign ? "Switch to classic design" : "Switch to modern design"));
+        _headerPanel.Controls.Add(_designButton);
+
         StyleSecondaryButton(_themeButton, new Point(0, 8), new Size(112, 28));
         _themeButton.Click += (_, _) =>
         {
@@ -1173,6 +1257,7 @@ internal sealed class MainForm : Form
             Program.ApplyColorMode(_darkTheme);
             SaveUiPreferences();
             BuildPage();
+            RefreshThemeAwareHandles(this);
             UpdatePreferenceControlText();
             ApplyThemeToTree(this);
             ApplyUiLanguage(this);
@@ -1199,10 +1284,164 @@ internal sealed class MainForm : Form
         _pagePanel.AutoScroll = true;
         _pagePanel.BackColor = Canvas;
         _pagePanel.Padding = UiPadding(34, 8, 34, 28);
-        shell.Controls.Add(_pagePanel, 1, 1);
         _pagePanel.ClientSizeChanged += (_, _) => RefreshPageLayoutForWidth();
+        ApplyDesignLayout();
         BuildLockOverlay();
         LayoutHeaderStatus();
+    }
+
+    private void ApplyDesignLayout()
+    {
+        if (!_shell.IsHandleCreated && _shell.Parent is null) return;
+        _shell.SuspendLayout();
+        _railLayout.SuspendLayout();
+        _navigationRail.SuspendLayout();
+        bool modern = _modernDesign;
+
+        _shell.Controls.Clear();
+        _shell.ColumnStyles.Clear();
+        _shell.RowStyles.Clear();
+        _shell.ColumnCount = modern ? 1 : 2;
+        _shell.RowCount = modern ? 3 : 2;
+        if (modern)
+        {
+            _shell.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            _shell.RowStyles.Add(new RowStyle(SizeType.Absolute, ScaleUi(132)));
+            _shell.RowStyles.Add(new RowStyle(SizeType.Absolute, ScaleUi(58)));
+            _shell.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+
+            _railLayout.Controls.Clear();
+            if (_brandPanel.Parent == _headerPanel) _headerPanel.Controls.Remove(_brandPanel);
+            _headerPanel.Controls.Add(_brandPanel);
+            _brandPanel.Dock = DockStyle.None;
+            _brandPanel.Location = UiPoint(12, 2);
+            _brandPanel.Size = UiSize(220, 58);
+            _brandPanel.BackColor = Canvas;
+            _brandIcon.Location = UiPoint(7, 10);
+            _brandIcon.Size = UiSize(40, 40);
+            _brandName.Location = UiPoint(54, 4);
+            _brandName.Font = new Font("Segoe UI Semibold", 22, FontStyle.Bold);
+            _brandSubtitle.Location = UiPoint(55, 39);
+            _brandSubtitle.ForeColor = Muted;
+
+            _railLayout.ColumnCount = 2;
+            _railLayout.RowCount = 1;
+            _railLayout.ColumnStyles.Clear();
+            _railLayout.RowStyles.Clear();
+            _railLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            _railLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, ScaleUi(224)));
+            _railLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            _navigationList.FlowDirection = FlowDirection.LeftToRight;
+            _navigationList.WrapContents = true;
+            _navigationList.Padding = UiPadding(10, 6, 10, 6);
+            _railLayout.Controls.Add(_navigationList, 0, 0);
+            _railLayout.Controls.Add(_railFooter, 1, 0);
+            _railFooter.Dock = DockStyle.Fill;
+            foreach (Button button in _navigation)
+            {
+                button.TextAlign = ContentAlignment.MiddleCenter;
+                button.Padding = Padding.Empty;
+                button.Margin = UiPadding(4, 4, 4, 4);
+            }
+            _shell.Controls.Add(_headerPanel, 0, 0);
+            _shell.Controls.Add(_navigationRail, 0, 1);
+            _shell.SetRowSpan(_navigationRail, 1);
+            _shell.Controls.Add(_pagePanel, 0, 2);
+            _pagePanel.Padding = UiPadding(34, 18, 34, 28);
+        }
+        else
+        {
+            _shell.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, ScaleUi(224)));
+            _shell.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            _shell.RowStyles.Add(new RowStyle(SizeType.Absolute, ScaleUi(100)));
+            _shell.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+
+            if (_brandPanel.Parent == _headerPanel) _headerPanel.Controls.Remove(_brandPanel);
+            _railLayout.ColumnCount = 1;
+            _railLayout.RowCount = 3;
+            _railLayout.ColumnStyles.Clear();
+            _railLayout.RowStyles.Clear();
+            _railLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            _railLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, ScaleUi(112)));
+            _railLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            _railLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, ScaleUi(62)));
+            _railLayout.Controls.Clear();
+            _railLayout.Controls.Add(_brandPanel, 0, 0);
+            _railLayout.Controls.Add(_navigationList, 0, 1);
+            _railLayout.Controls.Add(_railFooter, 0, 2);
+            _brandPanel.Dock = DockStyle.Fill;
+            _brandPanel.Location = Point.Empty;
+            _brandPanel.BackColor = Rail;
+            _brandIcon.Location = UiPoint(20, 23);
+            _brandIcon.Size = UiSize(38, 38);
+            _brandName.Location = UiPoint(64, 22);
+            _brandName.Font = new Font("Segoe UI Semibold", 22, FontStyle.Bold);
+            _brandSubtitle.Location = UiPoint(27, 70);
+            _brandSubtitle.ForeColor = Color.FromArgb(144, 161, 145);
+            _navigationList.FlowDirection = FlowDirection.TopDown;
+            _navigationList.WrapContents = false;
+            _navigationList.Padding = UiPadding(18, 8, 18, 8);
+            _railFooter.Dock = DockStyle.Fill;
+            foreach (Button button in _navigation)
+            {
+                button.TextAlign = ContentAlignment.MiddleLeft;
+                button.Padding = new Padding(14, 0, 0, 0);
+                button.Margin = Padding.Empty;
+                button.Size = UiSize(188, 38);
+            }
+            _shell.Controls.Add(_navigationRail, 0, 0);
+            _shell.SetRowSpan(_navigationRail, 2);
+            _shell.Controls.Add(_headerPanel, 1, 0);
+            _shell.Controls.Add(_pagePanel, 1, 1);
+            _pagePanel.Padding = UiPadding(34, 8, 34, 28);
+        }
+        _navigationRail.BackColor = Rail;
+        _railLayout.BackColor = Rail;
+        _brandPanel.BringToFront();
+        _shell.ResumeLayout(true);
+        _navigationRail.ResumeLayout(true);
+        _railLayout.ResumeLayout(true);
+        _lastPageViewportWidth = 0;
+        LayoutHeaderStatus();
+        LayoutModernNavigation();
+        QueueModernNavigationLayout();
+    }
+
+    private void QueueModernNavigationLayout()
+    {
+        if (!_modernDesign || !IsHandleCreated || IsDisposed || _modernNavigationLayoutQueued) return;
+        _modernNavigationLayoutQueued = true;
+        BeginInvoke((Action)(() =>
+        {
+            _modernNavigationLayoutQueued = false;
+            if (!_modernDesign || IsDisposed || !_shell.IsHandleCreated || _navigationList.ClientSize.Width <= 0) return;
+            _railLayout.PerformLayout();
+            _navigationRail.PerformLayout();
+            _shell.PerformLayout();
+            LayoutModernNavigation();
+        }));
+    }
+
+    private void LayoutModernNavigation()
+    {
+        if (!_modernDesign || _navigationList.ClientSize.Width <= 0 || _shell.RowStyles.Count < 2 ||
+            _navigation.Any(button => button is null)) return;
+        int available = _navigationList.ClientSize.Width - _navigationList.Padding.Horizontal;
+        int itemMargin = ScaleUi(8);
+        int minimumButtonWidth = ScaleUi(116);
+        int columns = Math.Clamp(available / Math.Max(1, minimumButtonWidth + itemMargin), 1, _navigation.Length);
+        int buttonWidth = Math.Max(minimumButtonWidth, available / columns - itemMargin);
+        foreach (Button button in _navigation)
+            button.Size = new Size(buttonWidth, ScaleUi(36));
+        int rows = (int)Math.Ceiling(_navigation.Length / (double)columns);
+        int desiredHeight = ScaleUi(12 + rows * 44);
+        RowStyle navigationRow = _shell.RowStyles[1];
+        if (navigationRow.SizeType != SizeType.Absolute || Math.Abs(navigationRow.Height - desiredHeight) > 0.5f)
+        {
+            navigationRow.SizeType = SizeType.Absolute;
+            navigationRow.Height = desiredHeight;
+            _shell.PerformLayout();
+        }
     }
 
     private void BuildLockOverlay()
@@ -1285,31 +1524,44 @@ internal sealed class MainForm : Form
     private void LayoutHeaderStatus()
     {
         if (_statusLabel.IsDisposed || _headerPanel.IsDisposed) return;
-        int margin = ScaleUi(34);
-        int width = _statusLabel.Width > 0 ? _statusLabel.Width : ScaleUi(292);
-        int themeWidth = ScaleUi(112);
-        int securityWidth = ScaleUi(92);
-        int updateWidth = ScaleUi(148);
+        if (_modernDesign)
+        {
+            LayoutWorkspaceHeader();
+            return;
+        }
+        int width = _headerPanel.ClientSize.Width;
+        int standardMargin = ScaleUi(34);
+        int standardGap = ScaleUi(8);
+        int standardControlsWidth = ScaleUi(112 + 92 + 92 + 148 + 112 + (_lockNowButton.Visible ? 124 : 0));
+        bool compactToolbar = standardMargin * 2 + standardControlsWidth + standardGap * (_lockNowButton.Visible ? 5 : 4) > width;
+        int margin = ScaleUi(compactToolbar ? 18 : 34);
+        int controlGap = ScaleUi(compactToolbar ? 4 : 8);
+        int themeWidth = ScaleUi(compactToolbar ? 100 : 112);
+        int designWidth = ScaleUi(compactToolbar ? 82 : 92);
+        int securityWidth = ScaleUi(compactToolbar ? 82 : 92);
+        int updateWidth = ScaleUi(compactToolbar ? 124 : 148);
+        int languageWidth = ScaleUi(compactToolbar ? 102 : 112);
         int lockWidth = ScaleUi(124);
-        int controlGap = ScaleUi(8);
-        int right = _headerPanel.ClientSize.Width - margin;
-        int allControlsWidth = _languageCombo.Width + updateWidth + securityWidth + themeWidth +
-                               (_lockNowButton.Visible ? lockWidth : 0);
-        int allGapsWidth = controlGap * (_lockNowButton.Visible ? 4 : 3);
-        bool compactToolbar = margin * 2 + allControlsWidth + allGapsWidth > _headerPanel.ClientSize.Width;
-
-        _themeButton.Location = new Point(Math.Max(margin, right - themeWidth), ScaleUi(8));
+        int statusWidth = Math.Min(_statusLabel.Width > 0 ? _statusLabel.Width : ScaleUi(292), Math.Max(ScaleUi(160), width - margin * 2));
+        _languageCombo.Size = new Size(languageWidth, ScaleUi(28));
+        _checkUpdatesButton.Size = new Size(updateWidth, ScaleUi(28));
+        _securityButton.Size = new Size(securityWidth, ScaleUi(28));
+        _designButton.Size = new Size(designWidth, ScaleUi(28));
+        _themeButton.Size = new Size(themeWidth, ScaleUi(28));
+        int right = width - margin;
         int topRowY = ScaleUi(8);
+        _themeButton.Location = new Point(Math.Max(margin, right - themeWidth), topRowY);
+        _designButton.Location = new Point(Math.Max(margin, _themeButton.Left - controlGap - designWidth), topRowY);
         int lockTopRowWidth = _lockNowButton.Visible && !compactToolbar ? lockWidth + controlGap : 0;
         int lockLeft = compactToolbar
-            ? right - width - controlGap - lockWidth
-            : right - themeWidth - controlGap - lockWidth;
+            ? right - statusWidth - controlGap - lockWidth
+            : _designButton.Left - controlGap - lockWidth;
         _lockNowButton.Location = new Point(Math.Max(margin, lockLeft), compactToolbar ? ScaleUi(43) : topRowY);
-        _securityButton.Location = new Point(Math.Max(margin, right - themeWidth - controlGap - lockTopRowWidth - securityWidth), topRowY);
-        _checkUpdatesButton.Location = new Point(Math.Max(margin, right - themeWidth - controlGap - lockTopRowWidth - securityWidth - controlGap - updateWidth), topRowY);
-        _languageCombo.Location = new Point(Math.Max(margin,
-            right - themeWidth - controlGap - lockTopRowWidth - securityWidth - controlGap - updateWidth - controlGap - _languageCombo.Width), topRowY);
-        _statusLabel.Location = new Point(Math.Max(margin, right - width), ScaleUi(43));
+        _securityButton.Location = new Point(Math.Max(margin, _designButton.Left - controlGap - securityWidth - lockTopRowWidth), topRowY);
+        _checkUpdatesButton.Location = new Point(Math.Max(margin, _securityButton.Left - controlGap - updateWidth), topRowY);
+        _languageCombo.Location = new Point(Math.Max(margin, _checkUpdatesButton.Left - controlGap - languageWidth), topRowY);
+        _statusLabel.Size = new Size(statusWidth, ScaleUi(34));
+        _statusLabel.Location = new Point(Math.Max(margin, right - statusWidth), ScaleUi(43));
 
         int titleX = ScaleUi(34);
         int titleGap = ScaleUi(12);
@@ -1339,6 +1591,72 @@ internal sealed class MainForm : Form
         _pageTitle.Location = new Point(titleX, ScaleUi(43));
         _pageTitle.Size = new Size(titleWidth, ScaleUi(34));
         SetPageTitleFont(titleFontSize);
+    }
+
+    private void LayoutWorkspaceHeader()
+    {
+        int width = _headerPanel.ClientSize.Width;
+        if (width <= 0) return;
+        int margin = ScaleUi(18);
+        int gap = ScaleUi(6);
+        int brandArea = ScaleUi(244);
+        int themeWidth = ScaleUi(100);
+        int designWidth = ScaleUi(82);
+        int securityWidth = ScaleUi(82);
+        int updateWidth = ScaleUi(124);
+        int languageWidth = ScaleUi(100);
+        int lockWidth = ScaleUi(108);
+        int controlCount = _lockNowButton.Visible ? 6 : 5;
+        int controlsWidth = themeWidth + designWidth + securityWidth + updateWidth + languageWidth +
+            (_lockNowButton.Visible ? lockWidth : 0) + gap * (controlCount - 1);
+        if (brandArea + controlsWidth + margin * 2 > width)
+        {
+            themeWidth = ScaleUi(92);
+            designWidth = ScaleUi(76);
+            securityWidth = ScaleUi(76);
+            updateWidth = ScaleUi(112);
+            languageWidth = ScaleUi(92);
+            lockWidth = ScaleUi(96);
+            gap = ScaleUi(4);
+        }
+
+        _brandPanel.Location = UiPoint(12, 2);
+        _brandPanel.Size = UiSize(220, 58);
+        int right = width - margin;
+        int top = ScaleUi(8);
+        _themeButton.Size = new Size(themeWidth, ScaleUi(28));
+        _designButton.Size = new Size(designWidth, ScaleUi(28));
+        _securityButton.Size = new Size(securityWidth, ScaleUi(28));
+        _checkUpdatesButton.Size = new Size(updateWidth, ScaleUi(28));
+        _languageCombo.Size = new Size(languageWidth, ScaleUi(28));
+        _lockNowButton.Size = new Size(lockWidth, ScaleUi(28));
+        _themeButton.Location = new Point(right - themeWidth, top);
+        _designButton.Location = new Point(_themeButton.Left - gap - designWidth, top);
+        int nextLeft = _designButton.Left - gap;
+        if (_lockNowButton.Visible)
+        {
+            _lockNowButton.Location = new Point(nextLeft - lockWidth, top);
+            nextLeft = _lockNowButton.Left - gap;
+        }
+        _securityButton.Location = new Point(nextLeft - securityWidth, top);
+        _checkUpdatesButton.Location = new Point(_securityButton.Left - gap - updateWidth, top);
+        _languageCombo.Location = new Point(_checkUpdatesButton.Left - gap - languageWidth, top);
+
+        int statusWidth = Math.Min(ScaleUi(292), Math.Max(ScaleUi(170), width - margin * 2));
+        _statusLabel.Size = new Size(statusWidth, ScaleUi(34));
+        _statusLabel.Location = new Point(right - statusWidth, ScaleUi(47));
+
+        int titleX = ScaleUi(28);
+        int titleWidth = Math.Max(ScaleUi(120), _statusLabel.Left - titleX - ScaleUi(14));
+        _pageTitle.AutoSize = false;
+        _pageTitle.AutoEllipsis = true;
+        _pageTitle.TextAlign = ContentAlignment.MiddleLeft;
+        _pageTitle.Location = new Point(titleX, ScaleUi(69));
+        _pageTitle.Size = new Size(titleWidth, ScaleUi(34));
+        SetPageTitleFont(21f);
+        _pageSubtitle.Visible = true;
+        _pageSubtitle.Location = UiPoint(32, 103);
+        _pageSubtitle.Size = new Size(Math.Max(ScaleUi(120), _statusLabel.Left - ScaleUi(42)), ScaleUi(22));
     }
 
     private int MeasurePageTitle(float fontSize)
@@ -1465,10 +1783,25 @@ internal sealed class MainForm : Form
         }
         _pagePanel.ResumeLayout();
         _pagePanel.PerformLayout();
+        CenterWorkspacePageControls();
         _pagePanel.AutoScrollPosition = new Point(savedScrollX, savedScrollY);
         ApplyThemeToTree(this);
         ApplyUiLanguage(this);
         UpdateStatus();
+    }
+
+    private void CenterWorkspacePageControls()
+    {
+        if (!_modernDesign || _pagePanel.Controls.Count == 0) return;
+        int left = _pagePanel.Controls.Cast<Control>().Min(control => control.Left);
+        int right = _pagePanel.Controls.Cast<Control>().Max(control => control.Right);
+        int contentWidth = right - left;
+        int availableWidth = _pagePanel.ClientSize.Width - _pagePanel.Padding.Horizontal;
+        if (contentWidth <= 0 || contentWidth >= availableWidth - ScaleUi(24)) return;
+        int shift = (availableWidth - contentWidth) / 2 - left;
+        if (shift == 0) return;
+        foreach (Control control in _pagePanel.Controls)
+            control.Left += shift;
     }
 
     private int GetFirstRunStep()
@@ -1508,7 +1841,7 @@ internal sealed class MainForm : Form
         AddLabel(card, title, 26, 24, cardWidth - 80, 34, Ink, 17, bold: true);
         AddLabel(card, description, 26, 75, cardWidth - 80, 58, Muted, 10.5f);
 
-        string[] steps = { "Нода", "Кошелёк", "Резервная копия", "Первый перевод или майнинг" };
+        string[] steps = { "Нода", "Кошелёк", "Резервная копия", "Перевод или майнинг" };
         int tileGap = 8;
         int tileWidth = (cardWidth - 52 - tileGap * 3) / steps.Length;
         for (int index = 0; index < steps.Length; index++)
@@ -1635,22 +1968,19 @@ internal sealed class MainForm : Form
         _autoLockUnitsLabel.TextAlign = ContentAlignment.MiddleLeft;
         _autoLockUnitsLabel.ForeColor = Ink;
         _autoLockUnitsLabel.Font = new Font("Segoe UI", 9.5f);
-        var autoLockRow = new FlowLayoutPanel
-        {
-            Name = "autoLockSettingsRow",
-            Location = UiPoint(24, 366),
-            Size = UiSize(contentWidth, 32),
-            FlowDirection = FlowDirection.LeftToRight,
-            WrapContents = false,
-            AutoSize = false,
-            Margin = Padding.Empty,
-            Padding = Padding.Empty,
-            BackColor = Surface
-        };
-        autoLockRow.Controls.Add(_autoLockCheck);
-        autoLockRow.Controls.Add(_autoLockMinutesInput);
-        autoLockRow.Controls.Add(_autoLockUnitsLabel);
-        securityCard.Controls.Add(autoLockRow);
+        _autoLockCheck.Location = UiPoint(24, 366);
+        _autoLockCheck.Size = UiSize(224, 32);
+        _autoLockMinutesInput.Location = UiPoint(258, 366);
+        _autoLockMinutesInput.Size = UiSize(76, 32);
+        _autoLockMinutesInput.TextAlign = HorizontalAlignment.Left;
+        _autoLockMinutesInput.Font = new Font("Segoe UI", 9.5f);
+        _autoLockMinutesInput.BackColor = InputSurface;
+        _autoLockMinutesInput.ForeColor = Ink;
+        _autoLockUnitsLabel.Location = UiPoint(346, 366);
+        _autoLockUnitsLabel.Size = UiSize(Math.Max(100, contentWidth - 352), 32);
+        securityCard.Controls.Add(_autoLockCheck);
+        securityCard.Controls.Add(_autoLockMinutesInput);
+        securityCard.Controls.Add(_autoLockUnitsLabel);
         _windowsHelloCheck.Text = "Разрешить разблокировку с помощью Windows Hello";
         _windowsHelloCheck.Checked = _windowsHelloEnabled;
         _windowsHelloCheck.Enabled = IsPinLockConfigured();
@@ -1943,7 +2273,14 @@ internal sealed class MainForm : Form
         _applicationLocked = false;
         _lastUiActivityUtc = DateTimeOffset.UtcNow;
         _lockOverlay.Visible = false;
+        _lockOverlay.SendToBack();
+        _shell.Visible = true;
+        _shell.BringToFront();
         _lockPinInput.Clear();
+        _shell.PerformLayout();
+        _shell.Invalidate(true);
+        Invalidate(true);
+        Update();
         Activate();
     }
 
@@ -3109,19 +3446,21 @@ internal sealed class MainForm : Form
 
         _transactionDetails.Text = "Выберите запись, чтобы посмотреть номер транзакции.";
         _transactionDetails.Location = UiPoint(18, 426);
-        _transactionDetails.Size = UiSize(cardWidth - 36, 32);
+        _transactionDetails.Size = UiSize(Math.Max(120, cardWidth - 190), 32);
         _transactionDetails.ForeColor = Muted;
         _transactionDetails.AutoEllipsis = true;
         card.Controls.Add(_transactionDetails);
 
         _copyTransactionIdButton.Text = "Копировать ID";
-        StyleSecondaryButton(_copyTransactionIdButton, new Point(cardWidth - 154, 462), new Size(132, 34));
+        StyleSecondaryButton(_copyTransactionIdButton, new Point(cardWidth - 154, 420), new Size(132, 34));
         _copyTransactionIdButton.Enabled = false;
         card.Controls.Add(_copyTransactionIdButton);
 
         _openTransactionExplorerLink.Text = TranslateUiText("Открыть в блокчейн-обозревателе ↗");
-        _openTransactionExplorerLink.Location = UiPoint(18, 464);
-        _openTransactionExplorerLink.Size = UiSize(Math.Min(310, Math.Max(160, cardWidth - 190)), 30);
+        _openTransactionExplorerLink.Location = UiPoint(18, 458);
+        _openTransactionExplorerLink.Size = UiSize(Math.Min(340, Math.Max(160, cardWidth - 36)), 30);
+        _openTransactionExplorerLink.BackColor = Color.Transparent;
+        _openTransactionExplorerLink.BorderStyle = BorderStyle.None;
         _openTransactionExplorerLink.TextAlign = ContentAlignment.MiddleLeft;
         _openTransactionExplorerLink.LinkColor = Accent;
         _openTransactionExplorerLink.ActiveLinkColor = Accent;
@@ -3136,15 +3475,22 @@ internal sealed class MainForm : Form
             : !File.Exists(AppPaths.WalletPath)
                 ? "Создайте или импортируйте кошелёк, чтобы увидеть историю."
                 : "Запрашиваю историю кошелька…";
-        _transactionStatus.Location = UiPoint(18, 502);
-        _transactionStatus.Size = UiSize(250, 28);
+        _transactionStatus.Location = UiPoint(18, 500);
+        int paginationLabelWidth = 64;
+        int pageSizeWidth = 62;
+        int pageButtonWidth = 38;
+        int pageNumberWidth = 52;
+        int paginationGap = 8;
+        int paginationWidth = paginationLabelWidth + pageSizeWidth + pageButtonWidth + pageNumberWidth + pageButtonWidth + paginationGap * 4;
+        int paginationLeft = cardWidth - 14 - paginationWidth;
+        _transactionStatus.Size = UiSize(Math.Max(110, paginationLeft - 30), 28);
         _transactionStatus.ForeColor = Muted;
         _transactionStatus.AutoEllipsis = true;
         card.Controls.Add(_transactionStatus);
 
         _transactionsPageSizeLabel.Text = "Записей:";
-        _transactionsPageSizeLabel.Location = UiPoint(270, 502);
-        _transactionsPageSizeLabel.Size = UiSize(78, 28);
+        _transactionsPageSizeLabel.Location = UiPoint(paginationLeft, 500);
+        _transactionsPageSizeLabel.Size = UiSize(paginationLabelWidth, 28);
         _transactionsPageSizeLabel.ForeColor = Muted;
         _transactionsPageSizeLabel.Font = new Font("Segoe UI", 8.5f);
         _transactionsPageSizeLabel.AutoEllipsis = true;
@@ -3153,23 +3499,26 @@ internal sealed class MainForm : Form
         _transactionsPageSizeCombo.DropDownStyle = ComboBoxStyle.DropDownList;
         if (_transactionsPageSizeCombo.Items.Count == 0)
             _transactionsPageSizeCombo.Items.AddRange(new object[] { 15, 30, 50 });
-        _transactionsPageSizeCombo.Location = UiPoint(350, 497);
-        _transactionsPageSizeCombo.Size = UiSize(65, 30);
+        _transactionsPageSizeCombo.Location = UiPoint(paginationLeft + paginationLabelWidth + paginationGap, 496);
+        _transactionsPageSizeCombo.Size = UiSize(pageSizeWidth, 32);
         _transactionsPageSizeCombo.Font = new Font("Segoe UI", 9);
         if (_transactionsPageSizeCombo.SelectedItem is not int)
             _transactionsPageSizeCombo.SelectedItem = _transactionsPageSize;
         card.Controls.Add(_transactionsPageSizeCombo);
 
         _previousTransactionsPageButton.Text = "‹";
-        StyleSecondaryButton(_previousTransactionsPageButton, new Point(423, 496), new Size(44, 32));
+        int previousLeft = paginationLeft + paginationLabelWidth + paginationGap + pageSizeWidth + paginationGap;
+        StyleSecondaryButton(_previousTransactionsPageButton, new Point(previousLeft, 496), new Size(pageButtonWidth, 32));
         card.Controls.Add(_previousTransactionsPageButton);
-        _transactionsPageLabel.Location = UiPoint(472, 502);
-        _transactionsPageLabel.Size = UiSize(52, 24);
+        int pageLabelLeft = previousLeft + pageButtonWidth + paginationGap;
+        _transactionsPageLabel.Location = UiPoint(pageLabelLeft, 500);
+        _transactionsPageLabel.Size = UiSize(pageNumberWidth, 24);
         _transactionsPageLabel.TextAlign = ContentAlignment.MiddleCenter;
         _transactionsPageLabel.ForeColor = Muted;
         card.Controls.Add(_transactionsPageLabel);
         _nextTransactionsPageButton.Text = "›";
-        StyleSecondaryButton(_nextTransactionsPageButton, new Point(530, 496), new Size(44, 32));
+        int nextLeft = pageLabelLeft + pageNumberWidth + paginationGap;
+        StyleSecondaryButton(_nextTransactionsPageButton, new Point(nextLeft, 496), new Size(pageButtonWidth, 32));
         card.Controls.Add(_nextTransactionsPageButton);
         RenderTransactionsPage();
     }
@@ -5748,8 +6097,12 @@ internal sealed class MainForm : Form
                 ? Success : Accent)
             : Muted;
         _statusLabel.BackColor = processRunning
-            ? (_darkTheme ? Color.FromArgb(48, 67, 53) : Color.FromArgb(229, 235, 221))
-            : (_darkTheme ? Color.FromArgb(48, 55, 50) : Color.FromArgb(226, 228, 219));
+            ? (_modernDesign
+                ? (_darkTheme ? Color.FromArgb(35, 61, 54) : Color.FromArgb(215, 238, 227))
+                : (_darkTheme ? Color.FromArgb(48, 67, 53) : Color.FromArgb(229, 235, 221)))
+            : (_modernDesign
+                ? (_darkTheme ? Color.FromArgb(42, 51, 53) : Color.FromArgb(226, 234, 231))
+                : (_darkTheme ? Color.FromArgb(48, 55, 50) : Color.FromArgb(226, 228, 219)));
         LayoutHeaderStatus();
     }
 
@@ -5859,6 +6212,32 @@ internal sealed class MainForm : Form
         _closePromptOpen = false;
     }
 
+    protected override void WndProc(ref Message message)
+    {
+        if (message.Msg == AppPaths.RequestInstallerShutdownMessage)
+        {
+            message.Result = new IntPtr(1);
+            if (!IsDisposed && IsHandleCreated)
+            {
+                try { BeginInvoke((Action)CloseForInstallerUpdate); } catch (InvalidOperationException) { }
+            }
+            return;
+        }
+        base.WndProc(ref message);
+    }
+
+    private void CloseForInstallerUpdate()
+    {
+        _trayExitRequested = true;
+        if (!Visible) RestoreFromSystemTray();
+        else
+        {
+            ShowInTaskbar = true;
+            Activate();
+        }
+        Close();
+    }
+
     private static string RandomSecret() => Convert.ToBase64String(RandomNumberGenerator.GetBytes(32))
         .Replace('+', '-').Replace('/', '_').TrimEnd('=');
 
@@ -5959,10 +6338,11 @@ internal sealed class MainForm : Form
     {
         var card = new Panel
         {
+            Name = "contentCard",
             Location = UiPoint(x, y),
             Size = UiSize(width, height),
             BackColor = Surface,
-            BorderStyle = BorderStyle.FixedSingle
+            BorderStyle = _modernDesign ? BorderStyle.None : BorderStyle.FixedSingle
         };
         _pagePanel.Controls.Add(card);
         return card;
@@ -5996,6 +6376,7 @@ internal sealed class MainForm : Form
 
     private void StylePrimaryButton(Button button, Point location, Size size)
     {
+        _primaryButtons.Add(button);
         button.Location = UiPoint(location.X, location.Y);
         button.Size = UiSize(size.Width, size.Height);
         button.FlatStyle = FlatStyle.Flat;
@@ -6008,10 +6389,15 @@ internal sealed class MainForm : Form
 
     private void StyleSecondaryButton(Button button, Point location, Size size)
     {
+        _secondaryButtons.Add(button);
         button.Location = UiPoint(location.X, location.Y);
         button.Size = UiSize(size.Width, size.Height);
         button.FlatStyle = FlatStyle.Flat;
-        button.FlatAppearance.BorderColor = _darkTheme ? Color.FromArgb(78, 88, 79) : Color.FromArgb(194, 198, 187);
+        button.FlatAppearance.BorderColor = Divider;
+        button.FlatAppearance.BorderSize = _modernDesign ? 0 : 1;
+        button.FlatAppearance.MouseOverBackColor = _modernDesign
+            ? (_darkTheme ? Color.FromArgb(42, 66, 65) : Color.FromArgb(218, 238, 230))
+            : (_darkTheme ? Color.FromArgb(48, 55, 50) : Color.FromArgb(239, 240, 234));
         button.BackColor = Surface;
         button.ForeColor = Ink;
         button.Font = new Font("Segoe UI Semibold", 9, FontStyle.Bold);
@@ -6036,6 +6422,7 @@ internal sealed class MainForm : Form
             UiPreferences? settings = JsonSerializer.Deserialize<UiPreferences>(File.ReadAllText(AppPaths.UiSettingsPath));
             _uiLanguage = UiLocalization.NormalizeLanguage(settings?.Language);
             _darkTheme = settings?.DarkTheme ?? false;
+            _modernDesign = settings?.ModernDesign ?? false;
             _firstRunGuideCompleted = settings?.FirstRunGuideCompleted ?? false;
             _firstRunBackupConfirmed = settings?.FirstRunBackupConfirmed ?? false;
             _notificationsEnabled = settings?.NotificationsEnabled ?? true;
@@ -6067,6 +6454,7 @@ internal sealed class MainForm : Form
             {
                 Language = _uiLanguage,
                 DarkTheme = _darkTheme,
+                ModernDesign = _modernDesign,
                 FirstRunGuideCompleted = _firstRunGuideCompleted,
                 FirstRunBackupConfirmed = _firstRunBackupConfirmed,
                 NotificationsEnabled = _notificationsEnabled,
@@ -6092,6 +6480,8 @@ internal sealed class MainForm : Form
     private void UpdatePreferenceControlText()
     {
         _themeButton.Text = _darkTheme ? "Светлая тема" : "Тёмная тема";
+        _designButton.Text = "Дизайн";
+        _headerToolTip.SetToolTip(_designButton, TranslateUiText(_modernDesign ? "Switch to classic design" : "Switch to modern design"));
         if (_trayOpenMenuItem is not null) _trayOpenMenuItem.Text = TranslateUiText("Открыть GeoCoin-Start");
         if (_trayExitMenuItem is not null) _trayExitMenuItem.Text = TranslateUiText("Выйти из GeoCoin-Start");
         int selectedIndex = Array.IndexOf(UiLocalization.LanguageCodes, _uiLanguage);
@@ -6375,8 +6765,48 @@ internal sealed class MainForm : Form
         }
         else if (root is ComboBox combo)
         {
+            combo.FlatStyle = FlatStyle.Flat;
+            combo.DrawMode = DrawMode.Normal;
             combo.BackColor = InputSurface;
             combo.ForeColor = Ink;
+        }
+        else if (root is CheckBox or RadioButton)
+        {
+            root.BackColor = Color.Transparent;
+            root.ForeColor = Ink;
+        }
+        else if (root is NumericUpDown numeric)
+        {
+            numeric.BackColor = InputSurface;
+            numeric.ForeColor = Ink;
+        }
+        else if (root is ListBox listBox)
+        {
+            listBox.BackColor = InputSurface;
+            listBox.ForeColor = Ink;
+        }
+        else if (root is Panel card && card.Name == "contentCard")
+        {
+            card.BackColor = Surface;
+            card.BorderStyle = _modernDesign ? BorderStyle.None : BorderStyle.FixedSingle;
+        }
+        else if (root is Button primaryButton && _primaryButtons.Contains(primaryButton))
+        {
+            primaryButton.FlatStyle = FlatStyle.Flat;
+            primaryButton.FlatAppearance.BorderSize = 0;
+            primaryButton.BackColor = Accent;
+            primaryButton.ForeColor = Color.White;
+        }
+        else if (root is Button secondaryButton && _secondaryButtons.Contains(secondaryButton))
+        {
+            secondaryButton.FlatStyle = FlatStyle.Flat;
+            secondaryButton.FlatAppearance.BorderSize = _modernDesign ? 0 : 1;
+            secondaryButton.FlatAppearance.BorderColor = Divider;
+            secondaryButton.FlatAppearance.MouseOverBackColor = _modernDesign
+                ? (_darkTheme ? Color.FromArgb(42, 66, 65) : Color.FromArgb(218, 238, 230))
+                : (_darkTheme ? Color.FromArgb(48, 55, 50) : Color.FromArgb(239, 240, 234));
+            secondaryButton.BackColor = Surface;
+            secondaryButton.ForeColor = Ink;
         }
         else if (root is Button button && button.Parent?.Name is "navigationRail" or "navigationList")
         {
@@ -6384,34 +6814,46 @@ internal sealed class MainForm : Form
             button.FlatStyle = FlatStyle.Flat;
             button.FlatAppearance.BorderSize = 0;
             button.FlatAppearance.BorderColor = Rail;
-            button.FlatAppearance.MouseOverBackColor = _darkTheme
-                ? Color.FromArgb(37, 48, 41)
-                : Color.FromArgb(39, 52, 43);
+            button.FlatAppearance.MouseOverBackColor = _modernDesign
+                ? (_darkTheme ? Color.FromArgb(31, 46, 46) : Color.FromArgb(210, 230, 222))
+                : (_darkTheme ? Color.FromArgb(37, 48, 41) : Color.FromArgb(39, 52, 43));
             button.BackColor = selected
-                ? (_darkTheme ? Color.FromArgb(48, 61, 52) : Color.FromArgb(44, 59, 48))
+                ? (_modernDesign
+                    ? (_darkTheme ? Color.FromArgb(35, 60, 56) : Color.FromArgb(204, 231, 221))
+                    : (_darkTheme ? Color.FromArgb(48, 61, 52) : Color.FromArgb(44, 59, 48)))
                 : Rail;
-            button.ForeColor = selected ? Color.FromArgb(241, 218, 173) : Color.FromArgb(206, 215, 205);
+            button.ForeColor = selected
+                ? (_modernDesign ? Accent : Color.FromArgb(241, 218, 173))
+                : (_modernDesign ? Muted : Color.FromArgb(206, 215, 205));
+        }
+        else if (root is LinkLabel link && link.Parent?.Name == "railFooter")
+        {
+            link.LinkColor = _modernDesign
+                ? (_darkTheme ? Color.FromArgb(137, 209, 190) : Color.FromArgb(23, 111, 96))
+                : Color.FromArgb(202, 180, 132);
+            link.ActiveLinkColor = _modernDesign ? Accent : Color.White;
+            link.VisitedLinkColor = link.LinkColor;
         }
         else if (root is Panel panel)
         {
             Color background = panel.BackColor;
-            if (background == LightCanvas || background == DarkCanvas) panel.BackColor = Canvas;
-            else if (background == Color.White || background == DarkSurface) panel.BackColor = Surface;
-            else if (background == Color.FromArgb(220, 220, 214) || background == Color.FromArgb(61, 68, 62)) panel.BackColor = Divider;
+            if (background == LightCanvas || background == DarkCanvas || background == ModernLightCanvas || background == ModernDarkCanvas)
+                panel.BackColor = Canvas;
+            else if (background == Color.White || background == DarkSurface || background == ModernDarkSurface)
+                panel.BackColor = Surface;
+            else if (background == Color.FromArgb(220, 220, 214) || background == Color.FromArgb(61, 68, 62) ||
+                     background == Color.FromArgb(207, 222, 216) || background == Color.FromArgb(53, 69, 68))
+                panel.BackColor = Divider;
         }
 
         if (root is Label label)
         {
-            if (label.ForeColor == LightInk || label.ForeColor == DarkInk) label.ForeColor = Ink;
-            else if (label.ForeColor == LightMuted || label.ForeColor == DarkMuted) label.ForeColor = Muted;
-        }
-        if (root is Button nonRailButton && nonRailButton.Parent?.Name is not ("navigationRail" or "navigationList"))
-        {
-            Color background = nonRailButton.BackColor;
-            if (background == Color.White || background == DarkSurface) nonRailButton.BackColor = Surface;
-            else if (background == Color.FromArgb(166, 129, 63) || background == DarkAccent) nonRailButton.BackColor = Accent;
-            if (nonRailButton.ForeColor == LightInk || nonRailButton.ForeColor == DarkInk) nonRailButton.ForeColor = Ink;
-            nonRailButton.FlatAppearance.BorderColor = _darkTheme ? Color.FromArgb(78, 88, 79) : Color.FromArgb(194, 198, 187);
+            if (label.Name == "brandName") label.ForeColor = _modernDesign ? Accent : Color.FromArgb(233, 208, 153);
+            else if (label.Name == "brandSubtitle") label.ForeColor = _modernDesign ? Muted : Color.FromArgb(144, 161, 145);
+            else if (label.ForeColor == LightInk || label.ForeColor == DarkInk || label.ForeColor == ModernLightInk || label.ForeColor == ModernDarkInk)
+                label.ForeColor = Ink;
+            else if (label.ForeColor == LightMuted || label.ForeColor == DarkMuted || label.ForeColor == ModernLightMuted || label.ForeColor == ModernDarkMuted)
+                label.ForeColor = Muted;
         }
         if (root is DataGridView dataGrid)
         {
@@ -6426,6 +6868,23 @@ internal sealed class MainForm : Form
         }
         foreach (Control child in root.Controls)
             ApplyThemeToTree(child);
+    }
+
+    private void RefreshThemeAwareHandles(Control root)
+    {
+        if (root is ThemeAwarePanel themePanel)
+            themePanel.RecreateThemeHandle();
+        else if (root is ThemeAwareFlowLayoutPanel themeFlow)
+            themeFlow.RecreateThemeHandle();
+        else if (root is ThemeAwareComboBox themeCombo)
+            themeCombo.RecreateThemeHandle();
+        else if (root is ThemeAwareCheckedListBox themeCheckedList)
+            themeCheckedList.RefreshThemeDrawing();
+        else if (root is ThemeAwareNumericUpDown themeNumeric)
+            themeNumeric.RefreshThemeDrawing();
+
+        foreach (Control child in root.Controls)
+            RefreshThemeAwareHandles(child);
     }
 
     private static void OpenLink(string address)

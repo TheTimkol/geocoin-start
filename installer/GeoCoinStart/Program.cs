@@ -13,8 +13,8 @@ internal static class Program
             Marshal.ThrowExceptionForHR(SetCurrentProcessExplicitAppUserModelId(AppPaths.ToastAppUserModelId));
         }
         catch { }
-        ApplyColorMode(ReadSavedDarkTheme());
         ApplicationConfiguration.Initialize();
+        ApplyColorMode(ReadSavedDarkTheme());
 
         if (args.Contains("--uninstall", StringComparer.OrdinalIgnoreCase))
         {
@@ -75,13 +75,14 @@ internal static class Program
 
 internal static class AppPaths
 {
-    public const string AppVersion = "0.3.3";
+    public const string AppVersion = "0.3.5";
     public const string OfficialVersion = "v0.1.3";
     public const string OfficialSha256 = "D97D655E3B45CD1B80BA4553BD5415F2B4FDD0FE370E50BA30158188D0C0EF99";
     public const string OfficialArchiveUrl = "https://github.com/NoemaCrypt/GeoCoin/releases/download/v0.1.3/GeoCoin-windows-x64-static.zip";
     public const string OriginalRepositoryUrl = "https://github.com/NoemaCrypt/GeoCoin";
     public const string DistributorUrl = "https://t.me/TheTimkol";
     public const string ToastAppUserModelId = "TheTimkol.GeoCoinStart";
+    public const int RequestInstallerShutdownMessage = 0x8000 + 0x351;
     public const string NetworkId = "degree";
     public const string TransactionExplorerBaseUrl = "https://explorer.geocoin.network";
     public const string LatestReleasePageUrl = "https://github.com/TheTimkol/geocoin-start/releases/latest";
