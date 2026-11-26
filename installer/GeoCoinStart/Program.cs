@@ -39,9 +39,42 @@ internal static class Program
             catch { }
         }
 
-        Application.Run(launchedByInstaller || isInstalledCopy
-            ? new MainForm()
-            : new InstallerForm());
+        if (launchedByInstaller || isInstalledCopy)
+        {
+            Directory.CreateDirectory(AppPaths.DataRoot);
+            FileStream instanceLock;
+            try
+            {
+                instanceLock = File.Open(Path.Combine(AppPaths.DataRoot, "client.lock"),
+                    FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+            }
+            catch (IOException)
+            {
+                MessageBox.Show("GeoCoin-Start уже запущен или его каталог данных недоступен.");
+                return;
+            }
+            using (instanceLock)
+            {
+                if (Directory.Exists(AppPaths.NodeSessionDirectory))
+                {
+                    foreach (string session in Directory.EnumerateDirectories(AppPaths.NodeSessionDirectory))
+                    {
+                        if (!Guid.TryParseExact(Path.GetFileName(session), "N", out _) ||
+                            File.GetAttributes(session).HasFlag(FileAttributes.ReparsePoint)) continue;
+                        try { File.Delete(Path.Combine(session, "wallet.pass")); }
+                        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                        {
+                            MessageBox.Show("Не удалось удалить файл пароля предыдущей сессии: " + ex.Message);
+                        }
+                    }
+                }
+                Application.Run(new MainForm());
+            }
+        }
+        else
+        {
+            Application.Run(new InstallerForm());
+        }
     }
 
     internal static void ApplyColorMode(bool darkTheme)
@@ -75,7 +108,7 @@ internal static class Program
 
 internal static class AppPaths
 {
-    public const string AppVersion = "0.3.7";
+    public const string AppVersion = "0.3.12";
     public const string OfficialVersion = "v0.1.3";
     public const string OfficialSha256 = "D97D655E3B45CD1B80BA4553BD5415F2B4FDD0FE370E50BA30158188D0C0EF99";
     public const string OfficialArchiveUrl = "https://github.com/NoemaCrypt/GeoCoin/releases/download/v0.1.3/GeoCoin-windows-x64-static.zip";

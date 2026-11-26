@@ -13,6 +13,10 @@ internal sealed class InstallerForm : Form
 
     private static readonly Dictionary<string, string> RussianToEnglish = new(StringComparer.Ordinal)
     {
+        ["Установлена более новая версия"] = "A newer version is installed",
+        ["Переустановить GeoCoin-Start"] = "Reinstall GeoCoin-Start",
+        ["Версия на компьютере новее версии установщика."] = "The installed version is newer than this installer.",
+        ["Эта версия уже установлена. Её можно переустановить."] = "This version is already installed. You can reinstall it.",
         ["Установка GeoCoin-Start"] = "Install GeoCoin-Start",
         ["просто и по шагам"] = "simple and step by step",
         ["Приложение уже установлено. Кнопка ниже обновит его до версии из этого установщика."] = "The app is already installed. The button below will update it to the version in this installer.",
@@ -193,6 +197,7 @@ internal sealed class InstallerForm : Form
 
     private async void InstallButtonClicked(object? sender, EventArgs e)
     {
+        if (CompareInstalledVersion() > 0) return;
         _installButton.Enabled = false;
         _languageCombo.Enabled = false;
         _status.Text = LocalizeInstallerText("Подготавливаю установку…");
@@ -263,6 +268,15 @@ internal sealed class InstallerForm : Form
                 _languageCombo.Enabled = true;
             }
         }
+    }
+
+    private static int CompareInstalledVersion()
+    {
+        if (!File.Exists(AppPaths.ExecutablePath)) return -1;
+        var metadata = FileVersionInfo.GetVersionInfo(AppPaths.ExecutablePath);
+        var installed = new Version(metadata.FileMajorPart, metadata.FileMinorPart,
+            metadata.FileBuildPart, metadata.FilePrivatePart);
+        return installed.CompareTo(Version.Parse(AppPaths.AppVersion + ".0"));
     }
 
     private static bool IsInstalledAppRunning()
@@ -353,7 +367,24 @@ internal sealed class InstallerForm : Form
         _symbolCredit.Text = LocalizeInstallerText("Знак GeoCoin: geocoin.network ↗");
         _distributorCredit.Text = LocalizeInstallerText("Редистрибьютор: TheTimkol ↗");
         _status.Text = LocalizeInstallerText(_alreadyInstalled ? "Готово к обновлению GeoCoin-Start" : "Готово к установке");
-        _installButton.Text = LocalizeInstallerText(_alreadyInstalled ? "Обновить GeoCoin-Start" : "Установить");
+        int versionOrder = CompareInstalledVersion();
+        _installButton.Enabled = versionOrder <= 0;
+        _installButton.Text = LocalizeInstallerText(versionOrder switch
+        {
+            > 0 => "Установлена более новая версия",
+            0 => "Переустановить GeoCoin-Start",
+            _ => _alreadyInstalled ? "Обновить GeoCoin-Start" : "Установить"
+        });
+        if (versionOrder > 0)
+        {
+            _subtitle.Text = LocalizeInstallerText("Версия на компьютере новее версии установщика.");
+            _status.Text = _subtitle.Text;
+        }
+        else if (versionOrder == 0)
+        {
+            _subtitle.Text = LocalizeInstallerText("Эта версия уже установлена. Её можно переустановить.");
+            _status.Text = _subtitle.Text;
+        }
         LayoutContent();
     }
 
@@ -461,8 +492,22 @@ internal sealed class InstallerForm : Form
 
     private static async Task InstallAsync(IProgress<InstallProgress> progress, string language)
     {
-        Directory.CreateDirectory(AppPaths.InstallDirectory);
-        Directory.CreateDirectory(AppPaths.OfficialDirectory);
+        string install = AppPaths.InstallDirectory;
+        string parent = Path.GetDirectoryName(install)!;
+        Directory.CreateDirectory(parent);
+        using var installLock = File.Open(install + ".install.lock", FileMode.OpenOrCreate,
+            FileAccess.ReadWrite, FileShare.None);
+        string rollback = install + ".rollback";
+        if (Directory.Exists(rollback))
+        {
+            if (Directory.Exists(install)) Directory.Delete(rollback, recursive: true);
+            else Directory.Move(rollback, install);
+        }
+        if (CompareInstalledVersion() > 0)
+            throw new InvalidOperationException("Версия на компьютере новее версии установщика.");
+        string stage = install + ".stage-" + Guid.NewGuid().ToString("N");
+        string officialStage = Path.Combine(stage, "official");
+        Directory.CreateDirectory(officialStage);
 
         string tempArchive = Path.Combine(Path.GetTempPath(), "GeoCoin-Start-" + Guid.NewGuid().ToString("N") + ".zip");
         try
@@ -499,7 +544,7 @@ internal sealed class InstallerForm : Form
 
             using (ZipArchive archive = ZipFile.OpenRead(tempArchive))
             {
-                string root = Path.GetFullPath(AppPaths.OfficialDirectory) + Path.DirectorySeparatorChar;
+                string root = Path.GetFullPath(officialStage) + Path.DirectorySeparatorChar;
                 int total = Math.Max(archive.Entries.Count, 1);
                 for (int index = 0; index < archive.Entries.Count; index++)
                 {
@@ -509,13 +554,8 @@ internal sealed class InstallerForm : Form
                     if (!destination.StartsWith(root, StringComparison.OrdinalIgnoreCase))
                         throw new InvalidDataException("В архиве обнаружен недопустимый путь.");
 
-                    if (IsExcludedOfficialEntry(entry.FullName))
-                    {
-                        // It belongs to the original Qt wallet, not GeoCoin-Start. Remove
-                        // copies left by an older install while keeping the source archive intact.
-                        if (File.Exists(destination)) File.Delete(destination);
-                    }
-                    else if (entry.FullName.EndsWith('/') || entry.FullName.EndsWith('\\'))
+                    if (IsExcludedOfficialEntry(entry.FullName)) continue;
+                    if (entry.FullName.EndsWith('/') || entry.FullName.EndsWith('\\'))
                     {
                         Directory.CreateDirectory(destination);
                     }
@@ -523,7 +563,7 @@ internal sealed class InstallerForm : Form
                     {
                         Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
                         await using Stream entryStream = entry.Open();
-                        await using var output = new FileStream(destination, FileMode.Create, FileAccess.Write, FileShare.None);
+                        await using var output = new FileStream(destination, FileMode.CreateNew, FileAccess.Write, FileShare.None);
                         await entryStream.CopyToAsync(output);
                     }
                     int percent = 45 + (index + 1) * 48 / total;
@@ -536,8 +576,12 @@ internal sealed class InstallerForm : Form
             if (string.IsNullOrWhiteSpace(currentExe) || !File.Exists(currentExe))
                 throw new InvalidOperationException("Не удалось определить файл установщика.");
             string installedExe = AppPaths.ExecutablePath;
-            if (!string.Equals(Path.GetFullPath(currentExe), Path.GetFullPath(installedExe), StringComparison.OrdinalIgnoreCase))
-                File.Copy(currentExe, installedExe, overwrite: true);
+            foreach (string requiredFile in new[] { AppPaths.NodePath, AppPaths.GpuMinerPath, AppPaths.ProductionManifestPath })
+            {
+                if (!File.Exists(Path.Combine(stage, Path.GetRelativePath(install, requiredFile))))
+                    throw new InvalidDataException("Пакет GeoCoin неполный: " + Path.GetFileName(requiredFile));
+            }
+            File.Copy(currentExe, Path.Combine(stage, Path.GetFileName(installedExe)));
 
             string markerJson = JsonSerializer.Serialize(new
             {
@@ -546,7 +590,21 @@ internal sealed class InstallerForm : Form
                 official_version = AppPaths.OfficialVersion,
                 official_sha256 = AppPaths.OfficialSha256
             }, new JsonSerializerOptions { WriteIndented = true });
-            await File.WriteAllTextAsync(AppPaths.InstallMarker, markerJson);
+            await File.WriteAllTextAsync(Path.Combine(stage, Path.GetFileName(AppPaths.InstallMarker)), markerJson);
+            if (CompareInstalledVersion() > 0)
+                throw new InvalidOperationException("Версия на компьютере новее версии установщика.");
+            if (Directory.Exists(install)) Directory.Move(install, rollback);
+            try
+            {
+                Directory.Move(stage, install);
+            }
+            catch
+            {
+                if (Directory.Exists(rollback)) Directory.Move(rollback, install);
+                throw;
+            }
+            try { Directory.Delete(rollback, recursive: true); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
             RegisterInstallation(installedExe);
             TryCreateShortcut(installedExe, Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), "GeoCoin-Start.lnk"));
@@ -561,6 +619,7 @@ internal sealed class InstallerForm : Form
         finally
         {
             try { File.Delete(tempArchive); } catch { }
+            try { Directory.Delete(stage, recursive: true); } catch { }
         }
     }
 

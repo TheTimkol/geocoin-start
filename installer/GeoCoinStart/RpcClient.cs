@@ -10,11 +10,12 @@ internal sealed class GeoCoinRpcClient : IDisposable
     private readonly Uri _endpoint;
     private int _requestId;
 
-    public GeoCoinRpcClient(string username, string password, string endpoint = "http://127.0.0.1:3033/")
+    public GeoCoinRpcClient(string username, string password, string endpoint = "http://127.0.0.1:3033/", bool subminer = false)
     {
         _endpoint = new Uri(endpoint, UriKind.Absolute);
-        _http = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
+        _http = new HttpClient(new HttpClientHandler { UseProxy = false, AllowAutoRedirect = false }) { Timeout = TimeSpan.FromSeconds(20) };
         string token = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{username}:{password}"));
+        if (subminer) _http.DefaultRequestHeaders.Add("X-GeoCoin-Client", "subminer");
         _http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Basic", token);
     }
 
@@ -32,7 +33,24 @@ internal sealed class GeoCoinRpcClient : IDisposable
         using var response = await _http.PostAsync(_endpoint, body);
         string json = await response.Content.ReadAsStringAsync();
 
-        using JsonDocument document = JsonDocument.Parse(json);
+        if ((int)response.StatusCode == 421)
+            throw new HttpRequestException(
+                "RPC отклонил заголовок Host. Используйте порт 3033 на обеих сторонах SSH-туннеля.",
+                null, response.StatusCode);
+
+        JsonDocument parsed;
+        try { parsed = JsonDocument.Parse(json); }
+        catch (JsonException)
+        {
+            response.EnsureSuccessStatusCode();
+            throw new InvalidOperationException("Нода вернула ответ в формате, отличном от JSON.");
+        }
+        using JsonDocument document = parsed;
+        if (document.RootElement.ValueKind != JsonValueKind.Object)
+        {
+            response.EnsureSuccessStatusCode();
+            throw new InvalidOperationException("Нода вернула непонятный ответ.");
+        }
         if (document.RootElement.TryGetProperty("error", out JsonElement error) &&
             error.ValueKind != JsonValueKind.Null)
         {

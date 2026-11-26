@@ -11,6 +11,7 @@ internal sealed class UiPreferences
     public bool FirstRunBackupConfirmed { get; set; }
     public bool NotificationsEnabled { get; set; } = true;
     public bool NotifyNodeStopped { get; set; } = true;
+    public bool NotifySubminerRpc { get; set; } = true;
     public bool NotifySyncComplete { get; set; } = true;
     public bool NotifyMiningRewards { get; set; } = true;
     public bool NotifyIncomingTransfers { get; set; } = true;

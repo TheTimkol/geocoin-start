@@ -33,7 +33,7 @@ Multilingual installer and simplified GeoCoin wallet for Windows 10/11 x64. Russ
 
 Running CPU and GPU mining together can put a heavy load on the computer. GPU mining requires a supported graphics card and its CUDA, HIP, or OpenCL driver. GeoCoin-Start does not install drivers.
 
-GeoCoin runs one node process with RPC enabled; RPC is an interface to that node, not a second node. Remote miner RPC uses plain HTTP. Use only a trusted LAN or VPN, allow private networks only if Windows Firewall asks, and do not expose/forward port 3033 to the internet. The miner password is held only while the application is open and changes after it closes. Never use the wallet private key or admin RPC password for a subminer.
+GeoCoin binds RPC to loopback. For a remote GPU worker, set up an encrypted tunnel from local port 3033 on the worker to 127.0.0.1:3033 on the node computer. Enter the local endpoint (for example, http://127.0.0.1:3033/) and use the miner-role credentials.
 
 ## Install and remove
 
@@ -53,14 +53,14 @@ The installer creates shortcuts in the Start menu and on the desktop. Remove Geo
 The build script creates a self-contained Windows x64 executable. The installer downloads the official package directly from the author's release and checks it against the pinned SHA-256 value:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File installer\GeoCoinStart\InstallerBuild.ps1
+powershell -File installer\GeoCoinStart\InstallerBuild.ps1 -DevelopmentBuild
 ```
 
-To sign the setup executable, install a trusted code-signing certificate and private key in the current Windows user's `Personal` certificate store. Then set the thumbprint and run the build:
+For a release, check out a clean version tag that matches the project version, install a trusted code-signing certificate and private key in the current Windows user's `Personal` certificate store. Then set the thumbprint and run the build:
 
 ```powershell
 $env:GEOCOIN_SIGNING_CERT_THUMBPRINT = "YOUR_CERTIFICATE_THUMBPRINT"
 powershell -ExecutionPolicy Bypass -File installer\GeoCoinStart\InstallerBuild.ps1
 ```
 
-The build verifies the certificate chain and Authenticode signature. Without a trusted certificate, the installer remains unsigned and Windows may show an unknown-publisher warning. The certificate subject is the publisher identity; the app continues to credit TheTimkol as redistributor.
+The release build requires a trusted Authenticode signature and verifies the commit recorded in the installer. In-app updates require a valid signature from the same signing certificate. Install the first signed release manually when upgrading from an unsigned build or when changing certificates.

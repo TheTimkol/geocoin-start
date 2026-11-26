@@ -29,7 +29,7 @@ The Apple silicon macOS build is part of this release. It targets macOS 14+ and 
 - A short ASCII-only path alias for the node and miner when a Windows profile path contains Cyrillic; wallet data stays in the current user's private `%LOCALAPPDATA%` folder.
 - A node page with live RPC health, process status, and an expandable peer list with active inbound/outbound connections and recent refusals separated from other connection failures. It also explains how to accept mainnet TCP 3030 peers without exposing RPC 3033.
 - Pause the on-screen node log while reading it and copy a sanitized diagnostic summary that excludes wallet addresses, passwords, and local paths.
-- A miner-only RPC profile for a trusted LAN/VPN and a remote GPU subminer page. The remote worker uses a public reward address and miner-role credentials, never a wallet private key or admin RPC password.
+- A miner-only RPC profile for remote GPU workers using an encrypted tunnel. The remote worker uses a public reward address and miner-role credentials, never a wallet private key or admin RPC password.
 - CPU and GPU mining controls on one page. Start either or both at once; the app shows a separate hashrate for each. GPU rewards use an existing address from the current wallet.
 - Mined-block count for the current day, current or most recent mining session, and wallet lifetime, plus mature and immature coin balances. Session and lifetime counts are retained across app restarts.
 - Transaction history with newest entries first, 15/30/50 rows per page, dates, operation type, amount, fee, confirmation state, address, and a copyable transaction ID. Mainnet transaction hashes link to the GeoCoin Explorer when the record contains a valid hash.
@@ -44,7 +44,7 @@ The Apple silicon macOS build is part of this release. It targets macOS 14+ and 
 
 Mining starts only after the user confirms. Running CPU and GPU mining together can put a heavy load on the computer. GPU mining requires a supported graphics card and working CUDA, HIP, or OpenCL drivers. The app does not install graphics drivers.
 
-GeoCoin has one node process; RPC is an interface on that process. Remote GPU mining binds RPC to a private network address and uses the miner role. The RPC connection uses plain HTTP, so use a trusted LAN or VPN only, allow private networks only in Windows Firewall, and do not forward RPC ports from the internet. The miner password is held only while GeoCoin-Start is open and is regenerated after the app closes.
+GeoCoin binds RPC to loopback. Remote GPU workers connect to the local port of an encrypted tunnel to the node. Use miner-role credentials and a public reward address on the worker.
 
 Wallet and node data stay on this computer under `%LOCALAPPDATA%`. When replacing an existing wallet, GeoCoin-Start first creates an encrypted safety backup and preserves the original wallet file in the local backup folder.
 
