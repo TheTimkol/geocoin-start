@@ -1,12 +1,20 @@
 # GeoCoin-Start
 
-A simple multilingual GeoCoin installer and wallet for Windows 10/11 x64. GeoCoin-Start provides a guided setup and a small interface for people who are new to running a node or using a cryptocurrency wallet.
+A community-made GeoCoin client for Windows 10/11 x64, Linux amd64, and Apple silicon Macs (ARM64, macOS 14+). GeoCoin-Start combines a guided Windows installer and wallet, a native Linux wallet/full-node client, and a native macOS app.
 
-## Download
+## Downloads
 
-[Download GeoCoin-Start-Setup.exe](https://github.com/TheTimkol/geocoin-start/releases/latest/download/GeoCoin-Start-Setup.exe) · [Verify its SHA-256 checksum](https://github.com/TheTimkol/geocoin-start/releases/latest/download/SHA256SUMS.txt)
+The latest release includes packages for Windows, Linux, and Apple silicon macOS:
 
-Run the setup file and choose **Install**. An internet connection is required: the installer downloads the official GeoCoin v0.1.3 Windows package from the author's release, verifies its SHA-256 checksum, and installs it for the current Windows user. Administrator rights and a separate .NET installation are not required.
+- [Windows 10/11 x64 installer](https://github.com/TheTimkol/geocoin-start/releases/latest/download/GeoCoin-Start-Setup.exe)
+- [Linux amd64 package](https://github.com/TheTimkol/geocoin-start/releases/latest/download/geocoin-client_0.1.3-1_amd64.deb)
+- [macOS Apple silicon DMG](https://github.com/TheTimkol/geocoin-start/releases/latest/download/GeoCoin-Start-macos-arm64.dmg)
+- [macOS portable archive](https://github.com/TheTimkol/geocoin-start/releases/latest/download/GeoCoin-Start-macos-arm64-portable.tar.gz)
+- [SHA-256 checksums](https://github.com/TheTimkol/geocoin-start/releases/latest/download/SHA256SUMS.txt)
+
+Run the Windows setup file and choose **Install**. An internet connection is required: the installer downloads the official GeoCoin v0.1.3 Windows package from the author's release, verifies its SHA-256 checksum, and installs it for the current Windows user. Administrator rights and a separate .NET installation are not required.
+
+The Apple silicon macOS build is part of this release. It targets macOS 14+ and packages the native app in a DMG. See [MACOS-START.md](MACOS-START.md) for installation and first-run steps.
 
 ## Features
 
@@ -39,6 +47,13 @@ GeoCoin has one node process; RPC is an interface on that process. Remote GPU mi
 
 Wallet and node data stay on this computer under `%LOCALAPPDATA%`. When replacing an existing wallet, GeoCoin-Start first creates an encrypted safety backup and preserves the original wallet file in the local backup folder.
 
+
+## macOS Apple silicon
+
+The macOS ARM64 app provides the GeoCoin-Start wallet and node interface, Send and Receive pages with QR import/export, transaction history, live node status and log, optional 4- or 6-digit app PIN, light and dark themes, and Classic and Modern layouts. Glass transparency can be adjusted in Modern layout. Closing the window can leave the node running in the menu bar; choose **Quit** to stop the client. Wallet and chain data stay on this Mac in the current user's Application Support folder.
+
+The DMG was built and checked on an Apple M2 running macOS 15.7.2. It is ad hoc signed and not notarized by Apple. See [the macOS guide](MACOS-START.md) for checksum verification and installation steps.
+
 ## Attribution
 
 - Original project and developer: [NoemaCrypt / GeoCoin](https://github.com/NoemaCrypt/GeoCoin)
@@ -46,7 +61,7 @@ Wallet and node data stay on this computer under `%LOCALAPPDATA%`. When replacin
 - Official GeoCoin symbol: [geocoin.network](https://geocoin.network/)
 - Redistributor and GeoCoin-Start developer: [TheTimkol on Telegram](https://t.me/TheTimkol)
 
-GeoCoin-Start is an unofficial community-made application and is not maintained by NoemaCrypt. It downloads the original node, wallet, and miners unchanged from the official GeoCoin release, then provides a simpler interface and setup flow.
+GeoCoin-Start is an unofficial community project and is not maintained by NoemaCrypt. The Windows installer downloads the original GeoCoin v0.1.3 package unchanged and adds a guided setup. The Linux release is the native GeoCoin wallet/full-node package. The macOS app is a community build of GeoCoin with a native Apple silicon application bundle.
 
 ## Build
 
