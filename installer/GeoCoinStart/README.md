@@ -25,6 +25,7 @@ Multilingual installer and simplified GeoCoin wallet for Windows 10/11 x64. Russ
 - Receive page can export the selected address QR code as a PNG image. QR imports are decoded from image files.
 - Receive, history, and wallet pages explain what is missing and link back to the overview when the node or wallet is unavailable.
 - Password-protected wallets with full-wallet `.dat` backup export and import from existing GeoCoin wallet files or backups. Import asks for the file password when it is protected and does not change the source file.
+- Change an encrypted wallet's password or set a password on an unencrypted wallet. If startup cannot open the wallet file, the app explains that the password may be wrong and lets the user retry. Existing backups are unchanged by password changes.
 - Receive page can choose an existing wallet address or create a new one, and displays a copyable address QR code containing the raw GeoCoin address.
 - Import/export of a 64-character hexadecimal private key for an individual address. GeoCoin has no mnemonic seed phrase; use the `.dat` wallet backup for a full copy.
 - Private-key `.txt` exports are unencrypted and must be kept secret.

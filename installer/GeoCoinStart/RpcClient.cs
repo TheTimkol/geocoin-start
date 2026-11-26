@@ -31,7 +31,6 @@ internal sealed class GeoCoinRpcClient : IDisposable
         using var body = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
         using var response = await _http.PostAsync(_endpoint, body);
         string json = await response.Content.ReadAsStringAsync();
-        response.EnsureSuccessStatusCode();
 
         using JsonDocument document = JsonDocument.Parse(json);
         if (document.RootElement.TryGetProperty("error", out JsonElement error) &&
@@ -40,8 +39,13 @@ internal sealed class GeoCoinRpcClient : IDisposable
             string message = error.TryGetProperty("message", out JsonElement errorMessage)
                 ? errorMessage.GetString() ?? "Ошибка GeoCoin"
                 : error.ToString();
-            throw new InvalidOperationException(message);
+            int? code = error.TryGetProperty("code", out JsonElement errorCode) && errorCode.TryGetInt32(out int parsedCode)
+                ? parsedCode
+                : null;
+            throw new GeoCoinRpcException(code, message);
         }
+
+        response.EnsureSuccessStatusCode();
 
         if (!document.RootElement.TryGetProperty("result", out JsonElement result))
             throw new InvalidOperationException("Нода вернула непонятный ответ.");
@@ -49,4 +53,11 @@ internal sealed class GeoCoinRpcClient : IDisposable
     }
 
     public void Dispose() => _http.Dispose();
+}
+
+internal sealed class GeoCoinRpcException : InvalidOperationException
+{
+    public GeoCoinRpcException(int? code, string message) : base(message) => Code = code;
+
+    public int? Code { get; }
 }

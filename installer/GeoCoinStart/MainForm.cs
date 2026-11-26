@@ -283,6 +283,33 @@ internal sealed class MainForm : Form
         ["ПРОСТОЙ КОШЕЛЁК"] = "SIMPLE WALLET",
         ["Обзор"] = "Overview", ["Майнинг"] = "Mining", ["Подмайнер"] = "Subminer", ["Нода"] = "Node",
         ["Отправить"] = "Send", ["Получить"] = "Receive", ["История"] = "History", ["Кошелёк"] = "Wallet",
+        ["Изменить пароль кошелька"] = "Change wallet password", ["Защита паролем кошелька"] = "Wallet password protection",
+        ["Задать пароль кошелька"] = "Set wallet password",
+        ["Введите текущий пароль кошелька и задайте новый."] = "Enter the current wallet password, then choose a new password.",
+        ["Задайте пароль, чтобы зашифровать этот кошелёк. После шифрования нода перезапустится."] = "Choose a password to encrypt this wallet. The node will restart after encryption.",
+        ["Текущий пароль кошелька"] = "Current wallet password", ["Новый пароль кошелька"] = "New wallet password",
+        ["Повторите новый пароль кошелька"] = "Confirm new wallet password",
+        ["Изменить пароль"] = "Change password", ["Задать пароль"] = "Set password",
+        ["Введите текущий пароль кошелька."] = "Enter the current wallet password.",
+        ["Пароль кошелька не может быть пустым."] = "The wallet password cannot be empty.",
+        ["Выберите пароль, отличный от текущего."] = "Choose a password different from the current one.",
+        ["Задайте пароль для незашифрованного кошелька или замените текущий пароль. После изменения сохраните новую резервную копию."] = "Set a password on an unencrypted wallet or replace its current password. Save a new backup after changing it.",
+        ["Пароль задан, кошелёк зашифрован, но нода ещё работает. Остановите её и запустите снова, введя новый пароль."] = "The password was set and the wallet encrypted, but the node is still running. Stop it and start it again with the new password.",
+        ["Новый пароль"] = "New password", ["Неверный пароль"] = "Incorrect password",
+        ["Пароль изменён"] = "Password changed", ["Кошелёк защищён"] = "Wallet protected", ["Пароль задан"] = "Password set",
+        ["Не удалось изменить пароль кошелька"] = "Could not change wallet password",
+        ["Пароль кошелька изменён. Новые резервные копии будут открываться новым паролем; старые копии сохраняют прежний пароль."] = "Wallet password changed. New backups will use the new password; existing backups keep their previous password.",
+        ["Пароль задан, кошелёк зашифрован и нода перезапущена. Создайте новую резервную копию и храните пароль отдельно. Старые копии не изменены."] = "Password set, wallet encrypted, and node restarted. Create a new backup and store the password separately. Existing backups are unchanged.",
+        ["Не удалось открыть кошелёк. Возможная причина — неверный пароль. Проверьте пароль и раскладку клавиатуры. Если пароль верен, возможно, файл кошелька повреждён. Исходный файл оставлен без изменений."] = "GeoCoin could not open the wallet. The password may be incorrect. Check the password and keyboard layout. If it is correct, the wallet file may be damaged. The original file was left unchanged.",
+        ["Неверный пароль кошелька. Проверьте его и попробуйте снова."] = "Incorrect wallet password. Check it and try again.",
+        ["Этот кошелёк пока не защищён паролем. Установка пароля зашифрует его и перезапустит ноду; работающий майнинг остановится. Перед продолжением создайте резервную копию. Продолжить?"] = "This wallet is not password-protected yet. Setting a password encrypts it and restarts the node; active mining will stop. Create a backup before continuing. Continue?",
+        ["Пароль кошелька задан, но нода не смогла запуститься автоматически. Запустите её со страницы «Обзор» и введите новый пароль."] = "The wallet password was set, but the node could not restart automatically. Start it on the Overview page and enter the new password.",
+        ["Не удалось определить, защищён ли кошелёк паролем. Обновите состояние ноды и попробуйте снова."] = "Could not determine whether the wallet is password-protected. Refresh the node status and try again.",
+        ["Смена пароля требует запущенной локальной ноды и открытого кошелька."] = "Changing the password requires a running local node and an open wallet.",
+        ["Кошелёк зашифрован"] = "Wallet encrypted",
+        ["Не удалось открыть кошелёк"] = "Could not open wallet",
+        ["Попробовать ещё раз"] = "Retry",
+        ["Повторить"] = "Retry",
         ["Помощник"] = "Guide", ["Настройки"] = "Settings", ["Дизайн"] = "Design", ["Помощник первого запуска"] = "First-run guide",
         ["Переключить на современный стиль"] = "Switch to modern design",
         ["Переключить на классический стиль"] = "Switch to classic design",
@@ -624,6 +651,7 @@ internal sealed class MainForm : Form
     private readonly Label _transactionsPageLabel = new();
     private readonly Label _transactionsPageSizeLabel = new();
     private readonly Button _walletFileExportButton = new();
+    private readonly Button _walletPasswordChangeButton = new();
     private readonly Button _walletKeyExportButton = new();
     private readonly Button _walletKeyImportButton = new();
     private readonly Button _refreshWalletAddressesButton = new();
@@ -1024,6 +1052,7 @@ internal sealed class MainForm : Form
         };
         _copyTransactionIdButton.Click += (_, _) => CopySelectedTransactionId();
         _walletFileExportButton.Click += async (_, _) => await BackupWalletAsync();
+        _walletPasswordChangeButton.Click += async (_, _) => await ChangeWalletPasswordAsync();
         _walletKeyExportButton.Click += async (_, _) => await ExportPrivateKeyAsync();
         _walletKeyImportButton.Click += async (_, _) => await ImportPrivateKeyAsync();
         _refreshWalletAddressesButton.Click += async (_, _) => await RefreshWalletAddressesAsync();
@@ -3551,7 +3580,7 @@ internal sealed class MainForm : Form
         int cardWidth = PageCardWidth(700);
         int contentWidth = cardWidth - 48;
         AddParagraph("Резервная копия сохраняет весь кошелёк. Приватный ключ относится только к одному адресу.", 22, 12, cardWidth, 42);
-        Panel card = AddCard(22, 66, cardWidth, 520);
+        Panel card = AddCard(22, 66, cardWidth, 670);
 
         AddLabel(card, "Полная копия кошелька", 24, 18, contentWidth, 24, Ink, 13, bold: true);
         AddLabel(card, "Файл .dat включает весь текущий кошелёк и подходит для его восстановления.",
@@ -3608,6 +3637,99 @@ internal sealed class MainForm : Form
         _walletKeyStatus.Size = UiSize(contentWidth, 48);
         _walletKeyStatus.ForeColor = Muted;
         card.Controls.Add(_walletKeyStatus);
+
+        var passwordDivider = new Panel
+        {
+            Location = UiPoint(24, 506),
+            Size = UiSize(contentWidth, 1),
+            BackColor = Divider
+        };
+        card.Controls.Add(passwordDivider);
+
+        AddLabel(card, "Защита паролем кошелька", 24, 524, contentWidth, 24, Ink, 13, bold: true);
+        AddLabel(card,
+            "Задайте пароль для незашифрованного кошелька или замените текущий пароль. После изменения сохраните новую резервную копию.",
+            24, 554, contentWidth, 42, Muted, 9.5f);
+        _walletPasswordChangeButton.Text = "Изменить пароль кошелька";
+        StyleSecondaryButton(_walletPasswordChangeButton, new Point(24, 608), new Size(268, 40));
+        _walletPasswordChangeButton.Enabled = IsNodeRunning();
+        card.Controls.Add(_walletPasswordChangeButton);
+    }
+
+    private async Task ChangeWalletPasswordAsync()
+    {
+        if (!IsNodeRunning() || _rpc is null || !File.Exists(AppPaths.WalletPath))
+        {
+            ShowLocalizedMessage("Смена пароля требует запущенной локальной ноды и открытого кошелька.",
+                "Кошелёк не открыт", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        _walletPasswordChangeButton.Enabled = false;
+        try
+        {
+            JsonElement walletInfo = await _rpc.CallAsync("getwalletinfo");
+            if (!walletInfo.TryGetProperty("encrypted", out JsonElement encryptedElement) ||
+                encryptedElement.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
+                throw new InvalidOperationException(TranslateUiText("Не удалось определить, защищён ли кошелёк паролем. Обновите состояние ноды и попробуйте снова."));
+
+            bool walletIsEncrypted = encryptedElement.GetBoolean();
+            if (!walletIsEncrypted && ShowLocalizedMessage(
+                    "Этот кошелёк пока не защищён паролем. Установка пароля зашифрует его и перезапустит ноду; работающий майнинг остановится. Перед продолжением создайте резервную копию. Продолжить?",
+                    "Задать пароль кошелька", MessageBoxButtons.YesNo, MessageBoxIcon.Warning,
+                    MessageBoxDefaultButton.Button2) != DialogResult.Yes)
+                return;
+
+            WalletPasswordChange? change = WalletPasswordChangeDialog.Ask(this, walletIsEncrypted, _darkTheme, TranslateUiText);
+            if (change is null) return;
+
+            if (walletIsEncrypted)
+            {
+                await _rpc.CallAsync("walletpassphrasechange", new[] { change.CurrentPassword!, change.NewPassword });
+                ShowLocalizedMessage(
+                    "Пароль кошелька изменён. Новые резервные копии будут открываться новым паролем; старые копии сохраняют прежний пароль.",
+                    "Пароль изменён", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            await _rpc.CallAsync("encryptwallet", new[] { change.NewPassword });
+            await StopNodeAsync();
+            if (IsNodeRunning())
+            {
+                ShowLocalizedMessage(
+                    "Пароль задан, кошелёк зашифрован, но нода ещё работает. Остановите её и запустите снова, введя новый пароль.",
+                    "Кошелёк зашифрован", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            await StartNodeAsync(offerWalletCreation: false, suppliedWalletPassword: change.NewPassword);
+            if (!IsNodeRunning())
+            {
+                ShowLocalizedMessage(
+                    "Пароль кошелька задан, но нода не смогла запуститься автоматически. Запустите её со страницы «Обзор» и введите новый пароль.",
+                    "Пароль задан", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            await RefreshStateAsync();
+            ShowLocalizedMessage(
+                "Пароль задан, кошелёк зашифрован и нода перезапущена. Создайте новую резервную копию и храните пароль отдельно. Старые копии не изменены.",
+                "Кошелёк защищён", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+        catch (GeoCoinRpcException ex) when (ex.Code == -14)
+        {
+            ShowLocalizedMessage("Неверный пароль кошелька. Проверьте его и попробуйте снова.",
+                "Неверный пароль", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+        catch (Exception ex)
+        {
+            ShowLocalizedMessage(ex.Message, "Не удалось изменить пароль кошелька", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+        finally
+        {
+            if (!_walletPasswordChangeButton.IsDisposed)
+                _walletPasswordChangeButton.Enabled = IsNodeRunning();
+        }
     }
 
     private async Task StartNodeAsync(bool offerWalletCreation = true, string? suppliedWalletPassword = null)
@@ -3669,6 +3791,8 @@ internal sealed class MainForm : Form
             if (walletPassword is null) return;
         }
 
+        long nodeLogStartOffset = GetFileLengthOrZero(AppPaths.LogPath);
+        bool retryWalletPassword = false;
         string sessionDirectory = Path.Combine(AppPaths.NodeSessionDirectory, Guid.NewGuid().ToString("N"));
         _startingNode = true;
         _nodeStatus = "Запускаю ноду…";
@@ -3759,10 +3883,20 @@ internal sealed class MainForm : Form
         }
         catch (Exception ex)
         {
-            if (IsNodeProcessRunning() && _nodeProcess is Process failedNode)
+            if (_nodeProcess is Process failedNode)
             {
-                try { failedNode.Kill(entireProcessTree: true); await failedNode.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10)); } catch { }
+                try
+                {
+                    if (!failedNode.HasExited)
+                    {
+                        failedNode.Kill(entireProcessTree: true);
+                        await failedNode.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
+                    }
+                    failedNode.WaitForExit();
+                }
+                catch { }
             }
+            try { _logWriter?.Flush(); } catch { }
             bool stopped = !IsNodeProcessRunning();
             if (stopped)
             {
@@ -3780,8 +3914,18 @@ internal sealed class MainForm : Form
                 _rpcHealthy = false;
             }
             else _nodeStatus = "Нода продолжает работать";
-            ShowLocalizedMessage(ex.Message + "\n\nЖурнал: " + AppPaths.LogPath,
-                "Не удалось запустить GeoCoin", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            if (existingWallet && NodeLogContainsWalletLoadFailure(nodeLogStartOffset))
+            {
+                DialogResult retry = ShowLocalizedMessage(
+                    "Не удалось открыть кошелёк. Возможная причина — неверный пароль. Проверьте пароль и раскладку клавиатуры. Если пароль верен, возможно, файл кошелька повреждён. Исходный файл оставлен без изменений.",
+                    "Не удалось открыть кошелёк", MessageBoxButtons.RetryCancel, MessageBoxIcon.Warning);
+                retryWalletPassword = retry == DialogResult.Retry;
+            }
+            else
+            {
+                ShowLocalizedMessage(ex.Message + "\n\nЖурнал: " + AppPaths.LogPath,
+                    "Не удалось запустить GeoCoin", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
         }
         finally
         {
@@ -3789,6 +3933,8 @@ internal sealed class MainForm : Form
         }
         UpdateStatus();
         BuildPage();
+        if (retryWalletPassword && !IsDisposed)
+            await StartNodeAsync(offerWalletCreation);
     }
 
     private async Task StopNodeAsync()
@@ -6276,6 +6422,25 @@ internal sealed class MainForm : Form
             }
         }
         catch { }
+    }
+
+    private static long GetFileLengthOrZero(string path)
+    {
+        try { return new FileInfo(path).Length; }
+        catch { return 0; }
+    }
+
+    private static bool NodeLogContainsWalletLoadFailure(long logStartOffset)
+    {
+        try
+        {
+            using var stream = new FileStream(AppPaths.LogPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            stream.Position = Math.Clamp(logStartOffset, 0, stream.Length);
+            using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+            string sessionLog = reader.ReadToEnd();
+            return sessionLog.Contains("Failed to load wallet from ", StringComparison.OrdinalIgnoreCase);
+        }
+        catch { return false; }
     }
 
     private static long ReadInt64(JsonElement value, string property)

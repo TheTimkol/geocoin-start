@@ -37,6 +37,7 @@ The Apple silicon macOS build is part of this release. It targets macOS 14+ and 
 - Receiving GeoCoin using any existing wallet address or a newly created address, with copy and QR-code PNG export. The QR code contains the raw GeoCoin address.
 - Clear empty states on receive, history, and wallet pages when the node or wallet is unavailable, with a link back to the overview.
 - Password-protected wallet creation, full-wallet `.dat` backup export, and import from an existing GeoCoin wallet file or backup. Import asks for the wallet file's password when it is protected and keeps the source file unchanged.
+- Wallet password changes, including adding password protection to an unencrypted wallet. Startup errors now identify a likely incorrect password and offer another attempt; changing an existing password preserves old backups, so make a new backup afterward.
 - Import and export of a 64-character hexadecimal private key for one address. GeoCoin does not use a mnemonic seed phrase; use the `.dat` backup to save the whole wallet.
 - A private-key `.txt` export is unencrypted and must be kept secret.
 - A Windows uninstaller in the Start menu and Installed Apps. Wallet and node data are kept by default; removal of those data is an explicit option.
