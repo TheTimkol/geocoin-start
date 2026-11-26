@@ -515,7 +515,8 @@ internal sealed class MainForm : Form
         ["Синхронизация"] = "Synchronizing", ["Нода завершилась"] = "Node exited", ["Нода запускается…"] = "Node is starting…", ["Подключаю GPU к удалённой ноде…"] = "Connecting GPU to remote node…",
         ["Подключаюсь к сети GeoCoin…"] = "Connecting to the GeoCoin network…",
         ["Локальная нода остановлена · работает режим подмайнера"] = "Local node stopped · subminer is running", ["RPC отвечает"] = "RPC is responding",
-        ["Процесс запущен · проверяю RPC…"] = "Process started · checking RPC…", ["Остановите подмайнер, чтобы сменить протокол GPU"] = "Stop the subminer to change the GPU protocol",
+        ["Процесс запущен · проверяю RPC…"] = "Process started · checking RPC…", ["Остановите GPU-майнинг, чтобы сменить протокол"] = "Stop GPU mining to change the protocol",
+        ["Остановите подмайнер, чтобы сменить протокол GPU"] = "Stop the subminer to change the GPU protocol",
         ["ЖУРНАЛ RPC ПОДМАЙНЕРА"] = "SUBMINER RPC LOG",
         ["Попыток подключения ещё не было."] = "No connection attempts yet.",
         ["Проверяю RPC"] = "Checking RPC",
@@ -642,7 +643,7 @@ internal sealed class MainForm : Form
     private readonly Queue<string> _subminerRpcLog = new();
 
     private readonly ThemeAwareNumericUpDown _threadCount = new();
-    private readonly ThemeAwareComboBox _gpuBackendCombo = new();
+    private readonly FlowLayoutPanel _mainGpuBackends = new();
     private readonly ThemeAwareComboBox _remoteGpuBackendCombo = new();
     private readonly PageWheelCheckedListBox _gpuDeviceList = new();
     private readonly PageWheelCheckedListBox _remoteGpuDeviceList = new();
@@ -1014,9 +1015,7 @@ internal sealed class MainForm : Form
         _remoteGpuButton.Click += async (_, _) => await ToggleRemoteGpuMiningAsync();
         _gpuDeviceList.ForwardWheelToPage = ScrollPageWithMouseWheel;
         _remoteGpuDeviceList.ForwardWheelToPage = ScrollPageWithMouseWheel;
-        _gpuBackendCombo.SelectedIndexChanged += (_, _) => GpuBackendChanged(_gpuBackendCombo, _gpuDeviceList);
         _remoteGpuBackendCombo.SelectedIndexChanged += (_, _) => GpuBackendChanged(_remoteGpuBackendCombo, _remoteGpuDeviceList);
-        _gpuBackendCombo.SelectionChangeCommitted += (_, _) => GpuBackendChanged(_gpuBackendCombo, _gpuDeviceList);
         _remoteGpuBackendCombo.SelectionChangeCommitted += (_, _) => GpuBackendChanged(_remoteGpuBackendCombo, _remoteGpuDeviceList);
         _gpuDeviceList.ItemCheck += (_, e) => GpuDeviceItemCheck(_gpuDeviceList, e);
         _remoteGpuDeviceList.ItemCheck += (_, e) => GpuDeviceItemCheck(_remoteGpuDeviceList, e);
@@ -2596,9 +2595,10 @@ internal sealed class MainForm : Form
 
         AddLabel(card, "Майнинг на видеокарте · GPU", 24, 250, cardWidth - 48, 24, Ink, 13, bold: true);
         AddLabel(card, "Награда поступит на уже существующий адрес этого кошелька.", 24, 280, cardWidth - 48, 24, Muted, 9.5f);
-        AddLabel(card, "Протокол GPU", 24, 310, 150, 20, Ink, 10, bold: true);
-        ConfigureGpuBackendCombo(_gpuBackendCombo, new Point(24, 334), new Size(Math.Max(240, cardWidth - 150), 34), !_gpuMiningActive);
-        card.Controls.Add(_gpuBackendCombo);
+        AddLabel(card, _gpuMiningActive ? "Остановите GPU-майнинг, чтобы сменить протокол" : "Протокол GPU",
+            24, 310, cardWidth - 48, 20, Ink, 10, bold: true);
+        ConfigureMainGpuBackends(cardWidth);
+        card.Controls.Add(_mainGpuBackends);
 
         _refreshGpuButton.Text = "Найти";
         StyleSecondaryButton(_refreshGpuButton, new Point(cardWidth - 112, 332), new Size(88, 36));
@@ -4346,6 +4346,41 @@ internal sealed class MainForm : Form
                 string.Equals(device.Backend, _selectedGpuBackend, StringComparison.OrdinalIgnoreCase) &&
                 _selectedGpuDeviceKeys.Contains(GpuDeviceKey(device))).ToList();
 
+    private void ConfigureMainGpuBackends(int cardWidth)
+    {
+        string[] backends = AvailableGpuBackends();
+        if (_selectedGpuBackend is null || !backends.Contains(_selectedGpuBackend, StringComparer.OrdinalIgnoreCase))
+            _selectedGpuBackend = backends.FirstOrDefault();
+
+        _mainGpuBackends.Location = UiPoint(24, 334);
+        _mainGpuBackends.Size = UiSize(Math.Max(240, cardWidth - 150), 34);
+        _mainGpuBackends.WrapContents = false;
+        _mainGpuBackends.AccessibleName = TranslateUiText("Протокол GPU");
+        _mainGpuBackends.Enabled = !_gpuMiningActive && !_checkingGpuDevices;
+        _mainGpuBackends.SuspendLayout();
+        while (_mainGpuBackends.Controls.Count > 0)
+            _mainGpuBackends.Controls[0].Dispose();
+
+        foreach (string backend in backends)
+        {
+            var option = new RadioButton
+            {
+                Text = backend.ToUpperInvariant(),
+                AutoSize = true,
+                Margin = new Padding(0, ScaleUi(6), ScaleUi(14), 0),
+                ForeColor = Ink,
+                Checked = string.Equals(backend, _selectedGpuBackend, StringComparison.OrdinalIgnoreCase)
+            };
+            option.CheckedChanged += (_, _) =>
+            {
+                if (option.Checked && _mainGpuBackends.Enabled)
+                    SelectGpuBackend(backend, _gpuDeviceList, enabled: true);
+            };
+            _mainGpuBackends.Controls.Add(option);
+        }
+        _mainGpuBackends.ResumeLayout();
+    }
+
     private void ConfigureGpuBackendCombo(ComboBox combo, Point location, Size size, bool enabled)
     {
         _updatingGpuDeviceLists = true;
@@ -4419,10 +4454,15 @@ internal sealed class MainForm : Form
     private void GpuBackendChanged(ComboBox combo, CheckedListBox list)
     {
         if (_updatingGpuDeviceLists || combo.SelectedIndex < 0 ||
-            combo.Items[combo.SelectedIndex] is not string backend ||
-            string.Equals(backend, _selectedGpuBackend, StringComparison.OrdinalIgnoreCase)) return;
+            combo.Items[combo.SelectedIndex] is not string backend) return;
+        SelectGpuBackend(backend, list, combo.Enabled);
+    }
+
+    private void SelectGpuBackend(string backend, CheckedListBox list, bool enabled)
+    {
+        if (string.Equals(backend, _selectedGpuBackend, StringComparison.OrdinalIgnoreCase)) return;
         _selectedGpuBackend = backend.ToLowerInvariant();
-        PopulateGpuDeviceItems(list, combo.Enabled);
+        PopulateGpuDeviceItems(list, enabled);
         UpdateGpuSelectionButtons();
     }
 
@@ -6297,7 +6337,7 @@ internal sealed class MainForm : Form
         _gpuMineButton.Text = TranslateUiText(_remoteGpuMining ? "Перейти к подмайнеру" : _gpuMiningActive ? "Остановить GPU" : "Запустить GPU");
         _gpuMineButton.Enabled = _remoteGpuMining || (IsNodeRunning() && File.Exists(AppPaths.WalletPath) &&
             (_gpuMiningActive || SelectedGpuDevices().Count > 0));
-        _gpuBackendCombo.Enabled = !_gpuMiningActive;
+        _mainGpuBackends.Enabled = !_gpuMiningActive && !_checkingGpuDevices;
         _gpuDeviceList.Enabled = !_gpuMiningActive && _gpuDeviceList.Items.Count > 0;
         _refreshGpuButton.Enabled = !_gpuMiningActive && !_checkingGpuDevices;
     }
